@@ -131,9 +131,13 @@
       diag.push(entry.name + ' [kind=' + entry.kind + ']');
       if (entry.kind === 'file') {
         if (isImageFile(entry.name)) {
-          const file = await entry.getFile();
-          try { Object.defineProperty(file, 'webkitRelativePath', { value: base + entry.name }); } catch (e) { /* 只读则忽略 */ }
-          files.push(file);
+          try {
+            const file = await entry.getFile();
+            try { Object.defineProperty(file, 'webkitRelativePath', { value: base + entry.name }); } catch (e) { /* 只读则忽略 */ }
+            files.push(file);
+          } catch (e) {
+            diag.push('  - getFile 失败: ' + (e && e.message || e));
+          }
         } else {
           diag.push('  - 非图片格式跳过');
         }
@@ -195,13 +199,39 @@
           }
           refresh();
         } else {
-          // 方案 2（兜底）：webkitGetAsEntry 递归
-          const entries = [];
+          // 方案 2（首选句柄）：getAsFileSystemHandle —— 拖文件夹的现代可靠路径
+          const handles = [];
           for (const it of e.dataTransfer.items) {
-            if (it.webkitGetAsEntry) { const en = it.webkitGetAsEntry(); if (en) entries.push(en); }
+            if (it.getAsFileSystemHandle) {
+              try { const h = await it.getAsFileSystemHandle(); if (h) handles.push(h); } catch (err) { /* 忽略 */ }
+            }
           }
-          if (entries.length) await addDirectoryEntries(entries);
-          refresh();
+          if (handles.length) {
+            const collected = [];
+            const diag = [];
+            for (const h of handles) {
+              if (h.kind === 'directory') await walkDirHandle(h, '', collected, diag);
+              else if (h.kind === 'file') {
+                diag.push(h.name + ' [kind=file]');
+                if (isImageFile(h.name)) { try { collected.push(await h.getFile()); } catch (err) { diag.push('  - getFile 失败'); } }
+              }
+            }
+            for (const f of collected) pushItem(f, f.webkitRelativePath || f.name);
+            refresh();
+            if (collected.length) {
+              // ok
+            } else {
+              showPageError('拖入目录诊断: ' + diag.join(' | ').slice(0, 300));
+            }
+          } else {
+            // 方案 3（兜底）：webkitGetAsEntry 递归
+            const entries = [];
+            for (const it of e.dataTransfer.items) {
+              if (it.webkitGetAsEntry) { const en = it.webkitGetAsEntry(); if (en) entries.push(en); }
+            }
+            if (entries.length) await addDirectoryEntries(entries);
+            refresh();
+          }
         }
         if (state.items.length === before) showPageError('拖入内容中没有可用的图片（jpg/png/webp/bmp/gif/avif/svg）');
       } catch (err) {
