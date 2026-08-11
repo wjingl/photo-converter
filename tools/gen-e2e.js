@@ -58,7 +58,7 @@ const DRIVER = `
       window.addEventListener('unhandledrejection', (e) => pageErrors.push('rejection: ' + (e.reason && e.reason.message || e.reason)));
       // 1. UI 已渲染（boot 已执行）
       report(!!document.querySelector('#dropZone'), 'UI 渲染完成');
-      report(document.querySelector('#targetKB').value === '50', '设置默认目标 50 KB');
+      report(document.querySelector('#targetKB').value === '100', '设置默认目标 100 KB');
       report(document.querySelector('#sizeW').value === '1.2' && document.querySelector('#sizeH').value === '1.8',
         '设置默认物理尺寸 1.2 × 1.8 cm');
       report(!document.querySelector('#dpi') && !document.querySelector('#maxEdge'),

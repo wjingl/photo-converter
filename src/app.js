@@ -5,7 +5,7 @@
 
   const state = {
     items: [],
-    settings: { targetKB: 50, sizeW: 1.2, sizeH: 1.8, format: 'auto', enhance: true, tolerance: 2 },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'auto', enhance: true, tolerance: 2 },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -303,7 +303,7 @@
   }
   function bindSettings() {
     const set = (key, val) => { state.settings[key] = val; saveSettings(); };
-    $('#targetKB').addEventListener('change', (e) => { set('targetKB', clampNum(e.target.value, 30, 2048, 50)); updatePxHint(); });
+    $('#targetKB').addEventListener('change', (e) => { set('targetKB', clampNum(e.target.value, 30, 2048, 100)); updatePxHint(); });
     $('#sizeW').addEventListener('change', (e) => { set('sizeW', clampNum(e.target.value, 0.2, 50, 1.5)); updatePxHint(); });
     $('#sizeH').addEventListener('change', (e) => { set('sizeH', clampNum(e.target.value, 0.2, 50, 1.5)); updatePxHint(); });
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
@@ -312,7 +312,7 @@
   }
   function updatePxHint() {
     const s = state.settings;
-    const kb = clampNum(s.targetKB, 5, 5120, 50);
+    const kb = clampNum(s.targetKB, 30, 2048, 100);
     const f = Math.sqrt(kb / 50);
     const w = Math.max(48, Math.round(cmToPx(s.sizeW, BASE_DPI) * f));
     const h = Math.max(48, Math.round(cmToPx(s.sizeH, BASE_DPI) * f));
@@ -572,7 +572,11 @@
     const startH = startPx(s.baseH, s.targetKB);
     let canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, startW, startH);
     const needEnhance = s.enhance && Math.max(crop.w, crop.h) < Math.max(startW, startH);
-    if (needEnhance) enhanceCanvas(canvas);
+    if (needEnhance) {
+      enhanceCanvas(canvas); // 低清上采样：锐化 + 对比度
+    } else if (Math.max(crop.w, crop.h) > Math.max(startW, startH)) {
+      lightSharpen(canvas, 0.3); // 高清降采样：轻度锐化恢复边缘（缩小后锐化），抵消缩放软化
+    }
     const ext = extFor(s, item.name);
     // 物理最长边（cm）—— 统一约束；DPI = 像素边长 / 物理边长
     const physMaxCm = Math.max(s.sizeW, s.sizeH);
