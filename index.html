@@ -1066,7 +1066,13 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
   async function addDirectoryEntries(entries, baseRel = '') {
     for (const entry of entries) {
       if (entry.isFile) {
-        const f = await new Promise((res) => entry.file(res, () => res(null)));
+        // file() 在 file:// 下可能挂起（不回调）——加超时防卡死
+        const f = await new Promise((res) => {
+          let done = false;
+          const finish = (v) => { if (!done) { done = true; res(v); } };
+          entry.file(finish, () => finish(null));
+          setTimeout(() => finish(null), 5000);
+        });
         if (f && isImageFile(f)) pushItem(f, baseRel + f.name);
       } else if (entry.isDirectory) {
         const children = await readAllEntries(entry);
@@ -1138,9 +1144,9 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
 
   function bindImport() {
     $('#btnPickFiles').addEventListener('click', () => $('#fileInput').click());
-    // 文件夹选择：webkitdirectory input 为主（FileList + 相对路径，兼容性最佳）；
-    // showDirectoryPicker 保留备用（个别环境 webkitdirectory 弹不出目录选择器时再切换）
-    $('#btnPickFolder').addEventListener('click', () => $('#folderInput').click());
+    // 文件夹选择：showDirectoryPicker 为主（用户环境唯一能弹出目录选择器的 API）；
+    // webkitdirectory input 保留备用
+    $('#btnPickFolder').addEventListener('click', () => pickFolderViaPicker());
     const dz = $('#dropZone');
     // 点击拖放区等同「选择图片」（按钮点击不触发）
     dz.addEventListener('click', (e) => { if (e.target.closest('button')) return; $('#fileInput').click(); });
@@ -1205,7 +1211,15 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
             refresh();
           }
         }
-        if (state.items.length === before) showPageError('拖入内容中没有可用的图片' + (lastDiag ? '（诊断: ' + lastDiag.slice(0, 220) + '）' : ''));
+        if (state.items.length === before) {
+          if (files.length === 0) {
+            // 拖的是文件夹但句柄路径不可用 → 降级：打开目录选择器（FileList 路径最可靠）
+            showPageError('浏览器不支持直接拖入文件夹，已打开文件夹选择器，请在其中选择文件夹');
+            pickFolderViaPicker();
+          } else {
+            showPageError('拖入内容中没有可用的图片' + (lastDiag ? '（诊断: ' + lastDiag.slice(0, 220) + '）' : ''));
+          }
+        }
       } catch (err) {
         showPageError('拖入失败：' + (err && err.message || err));
       }
