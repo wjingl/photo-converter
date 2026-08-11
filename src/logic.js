@@ -57,7 +57,7 @@
     return out;
   }
 
-  async function encodePng({ width, height, rgba, indices, palette, mode }) {
+  async function encodePng({ width, height, rgba, indices, palette, mode, phys }) {
     if (!width || !height) throw new Error('PNG 尺寸无效');
     const channels = mode === 'rgba' ? 4 : mode === 'palette' ? 1 : 3;
     const raw = new Uint8Array(height * (1 + width * channels));
@@ -86,6 +86,16 @@
     ihdr[9] = mode === 'rgba' ? 6 : mode === 'palette' ? 3 : 2;
     ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
     const chunks = [pngChunk('IHDR', ihdr)];
+    // 物理像素精度（DPI → 像素/米，unit=1）
+    if (phys && phys > 0) {
+      const ppm = Math.round(phys * 100 / 2.54);
+      const pdata = new Uint8Array(9);
+      const pdv = new DataView(pdata.buffer);
+      pdv.setUint32(0, ppm);
+      pdv.setUint32(4, ppm);
+      pdata[8] = 1; // 单位：米
+      chunks.push(pngChunk('pHYs', pdata));
+    }
     if (mode === 'palette') {
       const plte = new Uint8Array(palette.length * 3);
       const trns = new Uint8Array(palette.length);
@@ -255,6 +265,52 @@
     return rgba;
   }
 
+  // ---------- JPEG 像素密度写入（JFIF APP0，units=1 dots/inch）----------
+  // 已含 JFIF APP0 则改写 density；否则在 SOI 后插入标准 APP0 段。
+  // 不改变像素数据 → 文件大小不变。
+  function setJpegDensity(jpeg, dpi) {
+    if (jpeg.length < 4 || jpeg[0] !== 0xFF || jpeg[1] !== 0xD8) return jpeg;
+    // 扫描 SOI 之后的段，找 JFIF APP0
+    let off = 2;
+    let found = -1;
+    while (off + 4 <= jpeg.length && jpeg[off] === 0xFF) {
+      const m = jpeg[off + 1];
+      if (m === 0xE0) {
+        const len = (jpeg[off + 2] << 8) | jpeg[off + 3];
+        if (len >= 14 && jpeg[off + 4] === 0x4A) { found = off; break; } // "JF..."
+        off += 2 + len;
+      } else if (m === 0xD8 || (m >= 0xD0 && m <= 0xD7)) {
+        off += 2;
+      } else {
+        const len = (jpeg[off + 2] << 8) | jpeg[off + 3];
+        if (len < 2) break;
+        off += 2 + len;
+      }
+    }
+    const copy = jpeg.slice();
+    if (found >= 0) {
+      const base = found + 4; // "JFIF\0" 起点
+      copy[base + 7] = 1; // units = dots/inch
+      copy[base + 8] = dpi >> 8; copy[base + 9] = dpi & 0xFF;
+      copy[base + 10] = dpi >> 8; copy[base + 11] = dpi & 0xFF;
+      return copy;
+    }
+    // 插入 APP0（len=16）
+    const app0 = new Uint8Array([
+      0xFF, 0xE0, 0x00, 0x10,
+      0x4A, 0x46, 0x49, 0x46, 0x00, // "JFIF\0"
+      0x01, 0x02, 0x01,             // version 1.2, units=DPI
+      dpi >> 8, dpi & 0xFF,
+      dpi >> 8, dpi & 0xFF,
+      0x00, 0x00,                   // 无缩略图
+    ]);
+    const out = new Uint8Array(jpeg.length + app0.length);
+    out.set(jpeg.subarray(0, 2), 0);
+    out.set(app0, 2);
+    out.set(jpeg.subarray(2), 2 + app0.length);
+    return out;
+  }
+
   // ---------- ZIP 生成器（local header + raw deflate + central dir + EOCD）----------
   async function buildZip(entries) {
     const localParts = [];
@@ -328,5 +384,5 @@
     return out;
   }
 
-  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, computeCrop, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
 });

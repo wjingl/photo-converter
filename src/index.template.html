@@ -33,17 +33,16 @@
     <div class="settings-grid">
       <label class="field">目标大小
         <input type="number" id="targetKB" min="5" max="5120" step="1" value="50">
-        <span class="unit">KB · 每张图的分辨率会据此自动确定</span>
+        <span class="unit">KB</span>
       </label>
-      <label class="field">输出比例
-        <select id="aspectSelect">
-          <option value="1:1">1:1 正方形</option>
-          <option value="4:3">4:3</option>
-          <option value="3:2">3:2</option>
-          <option value="16:9">16:9</option>
-          <option value="custom">自定义</option>
-        </select>
-        <input type="text" id="customAspect" placeholder="如 5:4" value="5:4" hidden>
+      <label class="field">输出尺寸（物理）
+        <div class="dim-row">
+          <input type="number" id="sizeW" min="0.2" max="50" step="0.1" value="1.5">
+          <span class="dim-x">×</span>
+          <input type="number" id="sizeH" min="0.2" max="50" step="0.1" value="1.5">
+          <span class="unit">cm</span>
+        </div>
+        <span class="unit" id="pxHint">起始约 236 × 236 像素</span>
       </label>
       <label class="field">输出格式
         <select id="formatSelect">
@@ -59,7 +58,7 @@
       </label>
       <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化）</label>
     </div>
-    <p class="hint">裁剪规则：过宽图居中裁左右；过高图按 3:7 裁上下（上 30% / 下 70%）。分辨率由目标大小自动确定：低清图自动放大至能承载目标大小的边长并轻度锐化，高清图在目标大小内保持最佳画质。PNG 为无损格式，结果 ≤ 目标大小×容差。</p>
+    <p class="hint">所有输出图片的物理尺寸严格一致（如上所设）。像素精度（DPI）由目标大小实时演算：系统为每张图确定恰好能承载目标大小的像素密度（低熵图自动提高 DPI，高熵图保持适当 DPI），物理尺寸不变，只调整像素。DPI 已写入文件元数据（JPEG JFIF / PNG pHYs）。裁剪规则：过宽图居中裁左右；过高图按 3:7 裁上下（上 30% / 下 70%）。</p>
   </details>
 
   <!-- 列表 -->

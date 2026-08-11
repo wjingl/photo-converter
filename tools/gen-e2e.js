@@ -59,8 +59,10 @@ const DRIVER = `
       // 1. UI 已渲染（boot 已执行）
       report(!!document.querySelector('#dropZone'), 'UI 渲染完成');
       report(document.querySelector('#targetKB').value === '50', '设置默认目标 50 KB');
-      report(!document.querySelector('#maxEdge') && !document.querySelector('details.advanced'),
-        '无「最大边长」设置（分辨率由目标大小自动确定）');
+      report(document.querySelector('#sizeW').value === '1.5' && document.querySelector('#sizeH').value === '1.5',
+        '设置默认物理尺寸 1.5 × 1.5 cm');
+      report(!document.querySelector('#dpi') && !document.querySelector('#maxEdge'),
+        '无像素精度/最大边长配置（DPI 由目标大小实时演算）');
       // 探针：change 事件派发链路是否正常
       let probeFired = 0;
       const probeInput = document.querySelector('#fileInput');
@@ -229,18 +231,30 @@ const DRIVER = `
       // 轮 1：默认 50 KB（验证全流程、JPEG 精确命中、PNG 上限）
       await convertRound(50, ['photo-input.jpg'], true);
 
-      // 5. 预览弹层
+      // 5. 预览弹层 + 尺寸/DPI 演算结果
       {
-        const row0 = document.querySelectorAll('.file-row')[0];
-        const pvBtn = [...row0.querySelectorAll('.icon-btn')].find((b) => b.textContent === '预览');
-        pvBtn.click();
-        await tick(400);
-        report(!!document.querySelector('.modal-overlay'), '预览弹层打开');
-        const modalClose = document.querySelector('.modal-box .btn');
-        report(!!modalClose, '预览弹层有关闭按钮');
-        modalClose.click();
-        await tick(200);
-        report(!document.querySelector('.modal-overlay'), '预览弹层关闭');
+        const rows = document.querySelectorAll('.file-row');
+        let firstOpen = false;
+        let shapeOk = true;
+        let dpiMetaOk = true;
+        for (const row of rows) {
+          const pvBtn = [...row.querySelectorAll('.icon-btn')].find((b) => b.textContent === '预览');
+          pvBtn.click();
+          await tick(400);
+          const modal = document.querySelector('.modal-overlay');
+          if (!firstOpen && modal) { firstOpen = true; report(true, '预览弹层打开'); }
+          const img = document.querySelector('.modal-img');
+          const meta = document.querySelector('.modal-meta');
+          if (!img || img.naturalWidth !== img.naturalHeight) shapeOk = false; // 物理 1:1 → 像素正方形
+          if (!meta || !/DPI/.test(meta.textContent)) dpiMetaOk = false;
+          const close = document.querySelector('.modal-box .btn');
+          close.click();
+          await tick(150);
+        }
+        report(firstOpen, '预览弹层可用');
+        report(shapeOk, '全部输出像素保持统一比例（正方形）');
+        report(dpiMetaOk, '预览显示演算出的 DPI 元数据');
+        report(!document.querySelector('.modal-overlay'), '预览弹层全部关闭');
       }
 
       // 6. 重新转换全部

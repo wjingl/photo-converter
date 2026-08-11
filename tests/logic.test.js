@@ -240,6 +240,66 @@ test('autoContrast: 反差已足够时不变', () => {
   assert.deepStrictEqual(Array.from(rgba), before);
 });
 
+// ---------- 像素密度元数据 ----------
+test('setJpegDensity: 已有 APP0 时改写 density', () => {
+  // 构造最小 JPEG：SOI + JFIF APP0（density=72）+ EOI
+  const jpeg = new Uint8Array([
+    0xFF, 0xD8,
+    0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00, 0x00,
+    0xFF, 0xD9,
+  ]);
+  const out = PI.setJpegDensity(jpeg, 400);
+  assert.strictEqual(out.length, jpeg.length, '长度不变');
+  const base = 6; // SOI(2) + marker+len(4)
+  assert.strictEqual(out[base + 7], 1, 'units = dots/inch');
+  assert.strictEqual(out[base + 8], 0x01, 'Xdensity hi'); // 400 = 0x0190
+  assert.strictEqual(out[base + 9], 0x90, 'Xdensity lo');
+  assert.strictEqual(out[base + 10], 0x01, 'Ydensity hi');
+  assert.strictEqual(out[base + 11], 0x90, 'Ydensity lo');
+});
+
+test('setJpegDensity: 无 APP0 时插入', () => {
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xD9]);
+  const out = PI.setJpegDensity(jpeg, 240);
+  assert.strictEqual(out.length, jpeg.length + 18); // SOI + 18 字节 APP0
+  assert.strictEqual(out[0], 0xFF);
+  assert.strictEqual(out[1], 0xD8);
+  assert.strictEqual(out[2], 0xFF);
+  assert.strictEqual(out[3], 0xE0);
+  assert.strictEqual(out[6], 0x4A); // 'J' of JFIF
+  const base = 6;
+  assert.strictEqual(out[base + 7], 1);
+  assert.strictEqual(out[base + 8], 0x00); // 240 = 0x00F0
+  assert.strictEqual(out[base + 9], 0xF0);
+  // 尾部 EOI 仍在
+  assert.strictEqual(out[out.length - 2], 0xFF);
+  assert.strictEqual(out[out.length - 1], 0xD9);
+});
+
+test('encodePng: pHYs chunk 携带像素密度', async () => {
+  const rgba = new Uint8ClampedArray(4);
+  const bytes = await PI.encodePng({ width: 1, height: 1, rgba, mode: 'rgb', phys: 400 });
+  const png = parsePng(bytes);
+  const phys = png.chunks.find((c) => c.type === 'pHYs');
+  assert.ok(phys, 'pHYs 存在');
+  const dv = new DataView(phys.data.buffer);
+  const ppm = Math.round(400 * 100 / 2.54);
+  assert.strictEqual(dv.getUint32(0), ppm);
+  assert.strictEqual(dv.getUint32(4), ppm);
+  assert.strictEqual(phys.data[8], 1, 'unit = 米');
+  // 顺序：IHDR 之后、IDAT 之前
+  const types = png.chunks.map((c) => c.type);
+  assert.ok(types.indexOf('pHYs') > types.indexOf('IHDR'));
+  assert.ok(types.indexOf('pHYs') < types.indexOf('IDAT'));
+});
+
+test('encodePng: 无 phys 时不生成 pHYs', async () => {
+  const rgba = new Uint8ClampedArray(4);
+  const bytes = await PI.encodePng({ width: 1, height: 1, rgba, mode: 'rgb' });
+  const png = parsePng(bytes);
+  assert.ok(!png.chunks.some((c) => c.type === 'pHYs'));
+});
+
 // ---------- ZIP 解析辅助 ----------
 function parseZip(bytes) {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
