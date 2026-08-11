@@ -634,9 +634,10 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
   function dpiFromPx(px, cm) {
     return Math.round(px / (cm / 2.54));
   }
-  // 演算上限：随目标大小增长但不过度（30KB–2MB 目标 → 上限 2×基准 ~ 1493px，硬顶 2048px）
+  // 演算上限：目标驱动（×2×√(目标/50)），保证低熵内容也能通过放大贴近目标大小；
+  // 硬顶 2048px 防过度（30KB→×2，100KB→×2.8，256KB→×4.5，2MB→2048 封顶）
   function calcUpper(base, targetKB) {
-    return Math.min(2048, Math.max(base * 2, Math.round(base * Math.sqrt(targetKB / 50))));
+    return Math.min(2048, Math.round(base * 2 * Math.max(1, Math.sqrt(targetKB / 50))));
   }
   function currentSettings() {
     const s = state.settings;
