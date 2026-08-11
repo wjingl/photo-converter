@@ -1274,10 +1274,13 @@ window.MozjpegEnc = Module;</script>
       const pxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
       // 高质量最终编码：mozjpeg（开源 WASM）在搜索到的分辨率/质量处重编码并校验命中
       const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
-      // 缩小后锐化（缩小才发生）：恢复边缘，抵消缩放软化
       if (r.edge < Math.max(cw, ch)) {
+        // 缩小后锐化（缩小才发生）：恢复边缘，抵消缩放软化
         const ratio = Math.max(cw, ch) / r.edge;
         lightSharpen(finalCanvas, ratio > 4 ? 0.5 : ratio > 2 ? 0.45 : 0.4);
+      } else if (s.enhance) {
+        // 源分辨率路径（无缩放）：重压缩补偿锐化——恢复感知锐度，抵消二次压缩软化
+        lightSharpen(finalCanvas, 0.3);
       }
       let outBytes = await encodeJpegMozBest(finalCanvas, r.q, s.targetBytes, s.tolerance);
       if (!outBytes) outBytes = new Uint8Array(await r.blob.arrayBuffer()); // 回退原生
