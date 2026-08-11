@@ -575,7 +575,9 @@
     if (needEnhance) {
       enhanceCanvas(canvas); // 低清上采样：锐化 + 对比度
     } else if (Math.max(crop.w, crop.h) > Math.max(startW, startH)) {
-      lightSharpen(canvas, 0.3); // 高清降采样：轻度锐化恢复边缘（缩小后锐化），抵消缩放软化
+      // 高清降采样：锐化恢复边缘（缩小后锐化），抵消缩放软化；缩小越多软化越重 → 强度自适应
+      const ratio = Math.max(crop.w, crop.h) / Math.max(startW, startH);
+      lightSharpen(canvas, ratio > 4 ? 0.5 : ratio > 2 ? 0.45 : 0.4);
     }
     const ext = extFor(s, item.name);
     // 物理最长边（cm）—— 统一约束；DPI = 像素边长 / 物理边长
