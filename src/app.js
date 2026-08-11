@@ -5,7 +5,7 @@
 
   const state = {
     items: [],
-    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, qualityMode: 'high', theme: 'auto' },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, theme: 'auto' },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -54,7 +54,7 @@
       format: s.format,
       enhance: !!s.enhance,
       tolerance: Math.max(0.5, Math.min(15, s.tolerance)) / 100,
-      minQ: s.qualityMode === 'res' ? 45 : 90, // 高质量 q90（与原始几乎不可分辨）/ 高分辨率实验 q45
+      minQ: 90, // 固定高质量：q90 与原始几乎不可分辨（绝不压进伪影区）
     };
   }
 
@@ -327,7 +327,6 @@
     $('#formatSelect').value = s.format;
     $('#tolerance').value = s.tolerance;
     $('#enhanceToggle').checked = s.enhance;
-    $('#qualityMode').value = s.qualityMode || 'high';
     $('#themeSelect').value = s.theme || 'auto';
     updatePxHint();
   }
@@ -339,7 +338,6 @@
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
     $('#tolerance').addEventListener('change', (e) => set('tolerance', clampNum(e.target.value, 1, 10, 2)));
     $('#enhanceToggle').addEventListener('change', (e) => set('enhance', e.target.checked));
-    $('#qualityMode').addEventListener('change', (e) => set('qualityMode', e.target.value));
     $('#themeSelect').addEventListener('change', (e) => { set('theme', e.target.value); applyTheme(); });
   }
   // 主题：auto 跟随系统（移除 data-theme），显式覆盖亮/暗

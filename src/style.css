@@ -3,18 +3,21 @@
   --bg: #f4f6f8; --card: #ffffff; --text: #1b2733; --muted: #64748b;
   --border: #dbe2ea; --primary: #2f6fed; --primary-text: #ffffff;
   --accent: #16a34a; --danger: #dc2626; --shadow: 0 1px 3px rgba(16, 24, 40, .08);
+  --checker: #e5e9ef 0 25%, #ffffff 0 50%;
 }
 /* 暗色变量（显式暗色 或 跟随系统且未强制亮色） */
 :root[data-theme="dark"] {
-  --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
+  --bg: #0f1419; --card: #1a222b; --text: #f0f4f8; --muted: #a9bccf;
   --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
   --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);
+  --checker: #2c3a47 0 25%, #1a222b 0 50%;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
+    --bg: #0f1419; --card: #1a222b; --text: #f0f4f8; --muted: #a9bccf;
     --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
     --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);
+    --checker: #2c3a47 0 25%, #1a222b 0 50%;
   }
 }
 * { box-sizing: border-box; }
@@ -85,7 +88,7 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
 .row-progress-fill { height: 100%; width: 0%; background: var(--primary); border-radius: 2px; transition: width .15s; }
 .file-row .thumb {
   width: 48px; height: 48px; object-fit: cover; border-radius: 8px;
-  background: repeating-conic-gradient(#e5e9ef 0 25%, #fff 0 50%) 0 0/12px 12px; flex: none; cursor: pointer;
+  background: repeating-conic-gradient(var(--checker)) 0 0/12px 12px; flex: none; cursor: pointer;
 }
 .file-row .info { flex: 1; min-width: 0; }
 .file-row .name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -129,7 +132,7 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
 }
 .modal-img {
   width: 100%; max-height: 62vh; object-fit: contain; border-radius: 8px;
-  background: repeating-conic-gradient(#e5e9ef 0 25%, #fff 0 50%) 0 0/16px 16px;
+  background: repeating-conic-gradient(var(--checker)) 0 0/16px 16px;
 }
 .modal-meta { font-size: 13px; color: var(--muted); text-align: center; word-break: break-all; }
 .modal-box .btn { align-self: center; min-width: 120px; }

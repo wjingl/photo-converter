@@ -14,18 +14,21 @@
   --bg: #f4f6f8; --card: #ffffff; --text: #1b2733; --muted: #64748b;
   --border: #dbe2ea; --primary: #2f6fed; --primary-text: #ffffff;
   --accent: #16a34a; --danger: #dc2626; --shadow: 0 1px 3px rgba(16, 24, 40, .08);
+  --checker: #e5e9ef 0 25%, #ffffff 0 50%;
 }
 /* 暗色变量（显式暗色 或 跟随系统且未强制亮色） */
 :root[data-theme="dark"] {
-  --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
+  --bg: #0f1419; --card: #1a222b; --text: #f0f4f8; --muted: #a9bccf;
   --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
   --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);
+  --checker: #2c3a47 0 25%, #1a222b 0 50%;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
+    --bg: #0f1419; --card: #1a222b; --text: #f0f4f8; --muted: #a9bccf;
     --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
     --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);
+    --checker: #2c3a47 0 25%, #1a222b 0 50%;
   }
 }
 * { box-sizing: border-box; }
@@ -96,7 +99,7 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
 .row-progress-fill { height: 100%; width: 0%; background: var(--primary); border-radius: 2px; transition: width .15s; }
 .file-row .thumb {
   width: 48px; height: 48px; object-fit: cover; border-radius: 8px;
-  background: repeating-conic-gradient(#e5e9ef 0 25%, #fff 0 50%) 0 0/12px 12px; flex: none; cursor: pointer;
+  background: repeating-conic-gradient(var(--checker)) 0 0/12px 12px; flex: none; cursor: pointer;
 }
 .file-row .info { flex: 1; min-width: 0; }
 .file-row .name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -140,7 +143,7 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
 }
 .modal-img {
   width: 100%; max-height: 62vh; object-fit: contain; border-radius: 8px;
-  background: repeating-conic-gradient(#e5e9ef 0 25%, #fff 0 50%) 0 0/16px 16px;
+  background: repeating-conic-gradient(var(--checker)) 0 0/16px 16px;
 }
 .modal-meta { font-size: 13px; color: var(--muted); text-align: center; word-break: break-all; }
 .modal-box .btn { align-self: center; min-width: 120px; }
@@ -194,12 +197,6 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
       <label class="field">容差
         <input type="number" id="tolerance" min="1" max="10" step="1" value="2">
         <span class="unit">% · 大小允许的浮动范围</span>
-      </label>
-      <label class="field">画质策略
-        <select id="qualityMode">
-          <option value="high" selected>高质量（推荐）</option>
-          <option value="res">高分辨率（实验）</option>
-        </select>
       </label>
       <label class="field">主题
         <select id="themeSelect">
@@ -962,7 +959,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
 
   const state = {
     items: [],
-    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, qualityMode: 'high', theme: 'auto' },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, theme: 'auto' },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -1011,7 +1008,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       format: s.format,
       enhance: !!s.enhance,
       tolerance: Math.max(0.5, Math.min(15, s.tolerance)) / 100,
-      minQ: s.qualityMode === 'res' ? 45 : 90, // 高质量 q90（与原始几乎不可分辨）/ 高分辨率实验 q45
+      minQ: 90, // 固定高质量：q90 与原始几乎不可分辨（绝不压进伪影区）
     };
   }
 
@@ -1284,7 +1281,6 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     $('#formatSelect').value = s.format;
     $('#tolerance').value = s.tolerance;
     $('#enhanceToggle').checked = s.enhance;
-    $('#qualityMode').value = s.qualityMode || 'high';
     $('#themeSelect').value = s.theme || 'auto';
     updatePxHint();
   }
@@ -1296,7 +1292,6 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
     $('#tolerance').addEventListener('change', (e) => set('tolerance', clampNum(e.target.value, 1, 10, 2)));
     $('#enhanceToggle').addEventListener('change', (e) => set('enhance', e.target.checked));
-    $('#qualityMode').addEventListener('change', (e) => set('qualityMode', e.target.value));
     $('#themeSelect').addEventListener('change', (e) => { set('theme', e.target.value); applyTheme(); });
   }
   // 主题：auto 跟随系统（移除 data-theme），显式覆盖亮/暗
