@@ -109,6 +109,23 @@
     return out;
   }
 
+  // ---------- 比例归一裁剪 ----------
+  // 过宽：居中裁左右；过高：裁上下，上方 30% / 下方 70%（3:7）
+  function computeCrop(srcW, srcH, ratio) {
+    const [aW, aH] = ratio;
+    let w = srcW, h = srcH, x = 0, y = 0;
+    const srcRatio = srcW / srcH;
+    const targetRatio = aW / aH;
+    if (srcRatio > targetRatio) {
+      w = Math.round(srcH * targetRatio);
+      x = Math.round((srcW - w) / 2);
+    } else if (srcRatio < targetRatio) {
+      h = Math.round(srcW / targetRatio);
+      y = Math.round((srcH - h) * 0.3);
+    }
+    return { x, y, w, h };
+  }
+
   // ---------- 中位切分量化 ----------
   function boxScore(pix, rgba) {
     let rmin = 255, rmax = 0, gmin = 255, gmax = 0, bmin = 255, bmax = 0;
@@ -311,5 +328,5 @@
     return out;
   }
 
-  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, computeCrop, zlibDeflate, rawDeflate };
 });

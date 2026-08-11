@@ -153,6 +153,41 @@ test('quantize: 双色图收敛到 2 色', () => {
   assert.notStrictEqual(indices[0], indices[1]);
 });
 
+// ---------- 比例归一裁剪 ----------
+test('computeCrop: 过宽图居中裁左右', () => {
+  const c = PI.computeCrop(4000, 1500, [1, 1]);
+  assert.strictEqual(c.w, 1500);
+  assert.strictEqual(c.h, 1500);
+  assert.strictEqual(c.y, 0);
+  assert.strictEqual(c.x, Math.round((4000 - 1500) / 2));
+});
+
+test('computeCrop: 过高图按 3:7 裁上下（上 30%/下 70%）', () => {
+  const c = PI.computeCrop(2000, 4000, [1, 1]);
+  assert.strictEqual(c.w, 2000);
+  assert.strictEqual(c.h, 2000);
+  const excess = 4000 - 2000;
+  assert.strictEqual(c.y, Math.round(excess * 0.3));
+  assert.strictEqual(c.y + c.h, 4000 - Math.round(excess * 0.7));
+});
+
+test('computeCrop: 比例相同不裁剪', () => {
+  const c = PI.computeCrop(3000, 2000, [3, 2]);
+  assert.strictEqual(c.w, 3000);
+  assert.strictEqual(c.h, 2000);
+  assert.strictEqual(c.x, 0);
+  assert.strictEqual(c.y, 0);
+});
+
+test('computeCrop: 4:3 目标下宽图左侧补裁位置正确', () => {
+  const c = PI.computeCrop(1600, 900, [4, 3]);
+  // 目标比例 4/3=1.333 > 源 16/9=1.778 → 过宽裁左右
+  assert.strictEqual(c.w, 1200);
+  assert.strictEqual(c.h, 900);
+  assert.strictEqual(c.x, 200);
+  assert.strictEqual(c.y, 0);
+});
+
 // ---------- 增强 ----------
 test('unsharpMask: 平坦图保持不变', () => {
   const rgba = new Uint8ClampedArray(8 * 8 * 4).fill(255);

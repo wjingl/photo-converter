@@ -296,19 +296,7 @@
   }
 
   // 比例归一：过宽居中裁左右；过高按 3:7 裁上下（上 30% / 下 70%）
-  function computeCrop(srcW, srcH, [aW, aH]) {
-    let w = srcW, h = srcH, x = 0, y = 0;
-    const srcRatio = srcW / srcH;
-    const targetRatio = aW / aH;
-    if (srcRatio > targetRatio) {
-      w = Math.round(srcH * targetRatio);
-      x = Math.round((srcW - w) / 2);
-    } else if (srcRatio < targetRatio) {
-      h = Math.round(srcW / targetRatio);
-      y = Math.round((srcH - h) * 0.3);
-    }
-    return { x, y, w, h };
-  }
+  // （逻辑在 logic.js 的 PI.computeCrop，此处仅为调用）
 
   function outputDims(maxEdge, [aW, aH]) {
     if (aW >= aH) return { w: maxEdge, h: Math.round(maxEdge * aH / aW) };
@@ -348,26 +336,35 @@
     return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', q / 100));
   }
 
-  // JPEG：质量二分命中 [target*(1-tol), target*(1+tol)]；q=30 仍大则降分辨率（-12%/轮，下限 64）
+  // JPEG：质量二分命中 [target*(1-tol), target*(1+tol)]；耗尽后朝目标方向微调；q=30 仍大则降分辨率（-12%/轮，下限 64）
   async function jpegToTarget(canvas, targetBytes, tolerance, maxEdge) {
+    const low = targetBytes * (1 - tolerance);
+    const high = targetBytes * (1 + tolerance);
     let cur = canvas;
     let edge = maxEdge;
     let best = null;
     let bestDiff = Infinity;
     for (;;) {
       let lo = 30, hi = 95;
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 16; i++) {
         const q = Math.round((lo + hi) / 2);
         const blob = await toBlobJpeg(cur, q);
         const diff = Math.abs(blob.size - targetBytes);
         if (diff < bestDiff) { bestDiff = diff; best = { blob, q, edge }; }
-        const low = targetBytes * (1 - tolerance);
-        const high = targetBytes * (1 + tolerance);
         if (blob.size < low) lo = q + 1;
         else if (blob.size > high) hi = q - 1;
         else return { blob, q, edge };
       }
-      if (edge <= 64) break;
+      // 耗尽未命中：不超上限是硬约束。
+      // 1) best ≤ 上限（触顶或略低）：已是最接近，直接返回
+      if (best.blob.size <= high) return best;
+      // 2) best 超上限：向下线性扫描，输出 ≤ 上限的最接近档（应对小图尺寸跳跃）
+      for (let q = best.q - 1; q >= 30; q--) {
+        const blob = await toBlobJpeg(cur, q);
+        if (blob.size <= high) return { blob, q, edge };
+      }
+      // 3) q=30 仍超限：降分辨率重试
+      if (edge <= 64) return best; // 触底：返回最接近（尽力而为）
       edge = Math.round(edge * 0.88);
       cur = scaleCanvasByEdge(canvas, edge);
     }
@@ -418,7 +415,7 @@
     const s = currentSettings();
     const src = await loadBitmap(item.file);
     const { w: sw, h: sh } = srcDims(src);
-    const crop = computeCrop(sw, sh, s.aspect);
+    const crop = PI.computeCrop(sw, sh, s.aspect);
     const out = outputDims(s.maxEdge, s.aspect);
     let canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, out.w, out.h);
     const needEnhance = s.enhance && Math.max(crop.w, crop.h) < s.maxEdge;

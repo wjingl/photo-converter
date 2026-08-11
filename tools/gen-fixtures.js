@@ -27,6 +27,25 @@ function makeImage(w, h, fn) {
   return rgba;
 }
 
+// 平滑值噪声（分形八度可叠加，任何缩放级别都保留细节）
+function makeValueNoise(seed) {
+  const r2 = rng(seed);
+  return function noiseFn(w, h, scale) {
+    const gw = Math.ceil(w / scale) + 2, gh = Math.ceil(h / scale) + 2;
+    const grid = new Float32Array(gw * gh);
+    for (let i = 0; i < grid.length; i++) grid[i] = r2();
+    return (x, y) => {
+      const gx = x / scale, gy = y / scale;
+      const x0 = Math.floor(gx), y0 = Math.floor(gy);
+      const fx = gx - x0, fy = gy - y0;
+      const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+      const a = grid[y0 * gw + x0], b = grid[y0 * gw + x0 + 1];
+      const c = grid[(y0 + 1) * gw + x0], d = grid[(y0 + 1) * gw + x0 + 1];
+      return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
+    };
+  };
+}
+
 async function writePng(name, w, h, rgba) {
   const bytes = await PI.encodePng({ width: w, height: h, rgba, mode: 'rgba' });
   fs.writeFileSync(path.join(__dirname, '..', 'tests', 'fixtures', name), bytes);
@@ -38,15 +57,21 @@ async function writePng(name, w, h, rgba) {
   const r = rng(20260811);
   const noise = () => Math.floor(r() * 18);
 
-  // 1. 大图：天空渐变 + 噪点 + 地面（照片感，触发高质量压缩）
+  // 1. 大图：天空渐变 + 六层分形噪声（照片感纹理，缩放后仍保留丰富细节）
+  const noisePhoto = makeValueNoise(777);
+  const oct1 = noisePhoto(3000, 2000, 160); // 低频云（12.8px@240）
+  const oct2 = noisePhoto(3000, 2000, 40);  // 中频（3.2px@240）
+  const oct3 = noisePhoto(3000, 2000, 12);  // 高频（~1px@240）
+  const oct4 = noisePhoto(3000, 2000, 5);   // 极高频（0.4px@240）
   await writePng('big-photo.png', 3000, 2000, makeImage(3000, 2000, (x, y) => {
     const t = y / 2000;
+    const v = oct1(x, y) * 130 + oct2(x, y) * 110 + oct3(x, y) * 60 + oct4(x, y) * 28;
+    const n = Math.round(v);
     if (t < 0.55) {
-      const b = Math.round(200 - 130 * t + noise());
-      return [Math.round(140 - 90 * t + noise()), Math.round(170 - 80 * t + noise()), Math.round(b + 40), 255];
+      const b = Math.round(205 - 135 * t + n);
+      return [Math.round(145 - 95 * t + n), Math.round(175 - 85 * t + n * 0.8), Math.round(b + 40), 255];
     }
-    const g = Math.round(120 + (r() * 30));
-    return [Math.round(40 + r() * 30), Math.round(g), Math.round(60 + r() * 40), 255];
+    return [Math.round(45 + oct1(x, y) * 50 + n * 0.6), Math.round(120 + oct2(x, y) * 60 + n * 0.8), Math.round(60 + oct1(x, y) * 45), 255];
   }));
 
   // 2. 小图（触发上采样+增强）
