@@ -184,9 +184,10 @@
 
   function bindImport() {
     $('#btnPickFiles').addEventListener('click', () => $('#fileInput').click());
-    // 文件夹选择：showDirectoryPicker 为主（用户环境唯一能弹出目录选择器的 API）；
-    // webkitdirectory input 保留备用
-    $('#btnPickFolder').addEventListener('click', () => pickFolderViaPicker());
+    // 文件夹选择：webkitdirectory input 为主（file:// 下最可靠，业界推荐）；
+    // 之前的失败是隐藏方式 bug（display:none/opacity:0）——现已修复为 off-screen+opacity:1；
+    // showDirectoryPicker 作为备用（若 webkitdirectory 仍弹不出）
+    $('#btnPickFolder').addEventListener('click', () => $('#folderInput').click());
     const dz = $('#dropZone');
     // 点击拖放区等同「选择图片」（按钮点击不触发）
     dz.addEventListener('click', (e) => { if (e.target.closest('button')) return; $('#fileInput').click(); });
