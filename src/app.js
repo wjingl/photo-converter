@@ -282,7 +282,6 @@
   function renderSettings() {
     const s = state.settings;
     $('#targetKB').value = s.targetKB;
-    $('#maxEdge').value = s.maxEdge;
     $('#aspectSelect').value = s.aspect;
     $('#customAspect').value = s.customAspect;
     $('#customAspect').hidden = s.aspect !== 'custom';
@@ -293,7 +292,6 @@
   function bindSettings() {
     const set = (key, val) => { state.settings[key] = val; saveSettings(); };
     $('#targetKB').addEventListener('change', (e) => set('targetKB', clampNum(e.target.value, 5, 5120, 50)));
-    $('#maxEdge').addEventListener('change', (e) => set('maxEdge', clampNum(e.target.value, 32, 2048, 240)));
     $('#aspectSelect').addEventListener('change', (e) => {
       set('aspect', e.target.value);
       $('#customAspect').hidden = e.target.value !== 'custom';
@@ -405,21 +403,29 @@
     ctx.putImageData(img, 0, 0);
   }
 
+  // 轻度锐化（升分辨率路径专用）：插值放大后恢复边缘锐利，不做对比度拉伸
+  function lightSharpen(canvas, amount) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    PI.unsharpMask(img.data, canvas.width, canvas.height, 1, amount);
+    ctx.putImageData(img, 0, 0);
+  }
+
   // ---------- 编码到目标大小 ----------
   function toBlobJpeg(canvas, q) {
     return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', q / 100));
   }
 
   // JPEG（目标驱动）：分辨率与质量均由目标大小实时确定，逐图独立计算。
-  //   · q95 < 目标下限 → 升分辨率（×1.2，上限 = min(4096, max(2×起始边长, 源图边长))），
-  //     用更多像素承载信息，直至最高质量可达目标
+  //   · q95 < 目标下限 → 升分辨率（×1.2/级，上限 = 源边长与起始边长的较大者 × 2，
+  //     防止过度插值放大造成虚化），放大后轻度锐化恢复边缘锐利
   //   · q95 ≥ 下限 → 二分 [60,95] 找 ≤ 上限的最大质量
   //   · 质量下限 60：宁可降分辨率也不低于此画质
   //   · 硬约束：结果 ≤ 目标×(1+容差)；内容过简时返回最大可达并提示
   async function jpegToTarget(canvas, targetBytes, tolerance, maxEdge, srcMaxEdge) {
     const low = targetBytes * (1 - tolerance);
     const high = targetBytes * (1 + tolerance);
-    const upper = Math.min(4096, Math.max(maxEdge * 4, srcMaxEdge));
+    const upper = Math.min(4096, Math.max(srcMaxEdge, maxEdge) * 2);
     let edge = maxEdge;
     let cur = canvas;
     let best = null;
@@ -428,14 +434,18 @@
       const diff = Math.abs(blob.size - targetBytes);
       if (diff < bestDiff) { bestDiff = diff; best = { blob, q, edge }; }
     };
+    const upscale = () => {
+      edge = Math.round(edge * 1.2);
+      cur = scaleCanvasByEdge(canvas, edge);
+      lightSharpen(cur, 0.35); // 插值放大后锐化，避免虚化
+    };
     for (;;) {
       // 1) 触顶：最高质量仍低于目标下限 → 升分辨率
       const q95 = await toBlobJpeg(cur, 95);
       track(q95, 95);
       if (q95.size < low) {
         if (edge >= upper) return best; // 已达上限：内容不足以达标，返回最大可达
-        edge = Math.round(edge * 1.2);
-        cur = scaleCanvasByEdge(canvas, edge);
+        upscale();
         continue;
       }
       // 2) 二分 [60,95] 找 ≤ 上限的最大质量
@@ -452,8 +462,7 @@
         if (found.blob.size >= low) return { blob: found.blob, q: found.q, edge }; // 命中目标窗口
         // 质量档粒度跳过窗口（found 略低于下限）→ 升分辨率细化档位
         if (edge >= upper) return { blob: found.blob, q: found.q, edge };
-        edge = Math.round(edge * 1.2);
-        cur = scaleCanvasByEdge(canvas, edge);
+        upscale();
         continue;
       }
       // 3) q60 超限 → 降分辨率（画质下限保护）

@@ -59,7 +59,8 @@ const DRIVER = `
       // 1. UI 已渲染（boot 已执行）
       report(!!document.querySelector('#dropZone'), 'UI 渲染完成');
       report(document.querySelector('#targetKB').value === '50', '设置默认目标 50 KB');
-      report(document.querySelector('#maxEdge').value === '240', '设置默认最长边 240px');
+      report(!document.querySelector('#maxEdge') && !document.querySelector('details.advanced'),
+        '无「最大边长」设置（分辨率由目标大小自动确定）');
       // 探针：change 事件派发链路是否正常
       let probeFired = 0;
       const probeInput = document.querySelector('#fileInput');
