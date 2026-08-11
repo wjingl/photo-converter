@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="本地批量图片转换：统一大小与比例，无网络">
+<title>图片批量转换 · 统一大小</title>
+<style>
+:root {
+  --bg: #f4f6f8; --card: #ffffff; --text: #1b2733; --muted: #64748b;
+  --border: #dbe2ea; --primary: #2f6fed; --primary-text: #ffffff;
+  --accent: #16a34a; --danger: #dc2626; --shadow: 0 1px 3px rgba(16, 24, 40, .08);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
+    --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
+    --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+.topbar { max-width: 780px; margin: 0 auto; padding: 18px 16px 6px; display: flex; align-items: center; gap: 10px; }
+.topbar h1 { font-size: 20px; margin: 0; }
+.local-badge { font-size: 12px; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 2px 10px; }
+main { max-width: 780px; margin: 0 auto; padding: 10px 16px 90px; display: flex; flex-direction: column; gap: 14px; }
+
+#dropZone {
+  border: 2px dashed var(--border); border-radius: 14px; background: var(--card);
+  padding: 28px 16px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+}
+#dropZone.drag, #dropZone:focus-visible { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, var(--card)); outline: none; }
+.drop-icon { font-size: 30px; opacity: .7; }
+.drop-title { margin: 6px 0 2px; font-weight: 600; }
+.drop-sub { margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+.drop-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+.btn {
+  border: 1px solid var(--border); background: var(--card); color: var(--text);
+  border-radius: 10px; padding: 10px 18px; font-size: 15px; cursor: pointer;
+  min-height: 44px; touch-action: manipulation; transition: filter .12s;
+}
+.btn:active { filter: brightness(.94); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+.btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.ghost { background: transparent; }
+@media (max-width: 560px) { .btn { flex: 1; } }
+
+details#settingsPanel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+details#settingsPanel summary { cursor: pointer; padding: 12px 16px; font-weight: 600; user-select: none; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; padding: 4px 16px 14px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.field input[type="number"], .field input[type="text"], .field select {
+  font-size: 15px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text); min-height: 42px; width: 100%;
+}
+.field .unit { font-size: 12px; color: var(--muted); }
+.field.check { flex-direction: row; align-items: center; gap: 8px; font-size: 14px; color: var(--text); }
+.field.check input { width: 18px; height: 18px; }
+.hint { margin: 0; padding: 0 16px 14px; font-size: 12.5px; color: var(--muted); }
+
+.empty { text-align: center; color: var(--muted); padding: 26px 10px; font-size: 14px; }
+.file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.file-row {
+  display: flex; align-items: center; gap: 12px; background: var(--card);
+  border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; box-shadow: var(--shadow);
+}
+.file-row .thumb {
+  width: 48px; height: 48px; object-fit: cover; border-radius: 8px;
+  background: repeating-conic-gradient(#e5e9ef 0 25%, #fff 0 50%) 0 0/12px 12px; flex: none;
+}
+.file-row .info { flex: 1; min-width: 0; }
+.file-row .name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-row .meta { font-size: 12px; color: var(--muted); }
+.file-row .result { font-size: 12px; white-space: nowrap; }
+.file-row .status { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.file-row .status.waiting { color: var(--muted); }
+.file-row .status.processing { color: var(--primary); }
+.file-row .status.done { color: var(--accent); }
+.file-row .status.error { color: var(--danger); }
+.file-row .row-actions { display: flex; gap: 8px; flex: none; }
+.icon-btn { border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 13px; cursor: pointer; min-height: 40px; }
+.icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.actionbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border); padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+}
+.actionbar .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.stats { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.progress-wrap { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-bottom: 8px; }
+.progress-fill { height: 100%; width: 0%; background: var(--primary); border-radius: 3px; transition: width .15s; }
+
+.footer { max-width: 780px; margin: 0 auto; padding: 14px 16px 100px; font-size: 12px; color: var(--muted); text-align: center; }
+@media (min-width: 561px) {
+  main { padding-bottom: 120px; }
+  .footer { padding-bottom: 20px; }
+  .actionbar .actions { justify-content: flex-end; }
+}
+
+</style>
+</head>
+<body>
+<header class="topbar">
+  <h1>图片批量转换</h1>
+  <span class="local-badge">纯本地 · 零联网</span>
+</header>
+
+<main>
+  <!-- 导入区 -->
+  <section id="dropZone" tabindex="0" role="button" aria-label="拖入图片或文件夹">
+    <div class="drop-icon">⬆</div>
+    <p class="drop-title">拖入图片或文件夹到此处</p>
+    <p class="drop-sub">或点击下方按钮选择 · 支持整文件夹（含子文件夹）</p>
+    <div class="drop-actions">
+      <button type="button" class="btn primary" id="btnPickFiles">选择图片</button>
+      <button type="button" class="btn" id="btnPickFolder">选择文件夹</button>
+    </div>
+    <input type="file" id="fileInput" multiple accept="image/*" hidden>
+    <input type="file" id="folderInput" webkitdirectory multiple hidden>
+  </section>
+
+  <!-- 设置 -->
+  <details id="settingsPanel" open>
+    <summary>输出设置</summary>
+    <div class="settings-grid">
+      <label class="field">目标大小
+        <input type="number" id="targetKB" min="5" max="5120" step="1" value="50">
+        <span class="unit">KB</span>
+      </label>
+      <label class="field">输出比例
+        <select id="aspectSelect">
+          <option value="1:1">1:1 正方形</option>
+          <option value="4:3">4:3</option>
+          <option value="3:2">3:2</option>
+          <option value="16:9">16:9</option>
+          <option value="custom">自定义</option>
+        </select>
+      </label>
+      <label class="field custom-aspect" id="customAspectWrap" hidden>
+        <input type="text" id="customAspect" placeholder="如 5:4" value="5:4">
+      </label>
+      <label class="field">最长边
+        <input type="number" id="maxEdge" min="32" max="2048" step="1" value="240">
+        <span class="unit">px</span>
+      </label>
+      <label class="field">输出格式
+        <select id="formatSelect">
+          <option value="auto">保持原格式</option>
+          <option value="jpeg">JPEG（.jpg）</option>
+          <option value="jpg">JPG（.jpg）</option>
+          <option value="png">PNG（.png）</option>
+        </select>
+      </label>
+      <label class="field">容差
+        <input type="number" id="tolerance" min="1" max="10" step="1" value="2">
+        <span class="unit">%</span>
+      </label>
+      <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化 + 对比度）</label>
+    </div>
+    <p class="hint">裁剪规则：过宽图居中裁左右；过高图按 3:7 裁上下（上 30% / 下 70%）。JPEG 精确命中目标大小；PNG 为无损格式，结果 ≤ 目标大小×容差。</p>
+  </details>
+
+  <!-- 列表 -->
+  <section id="listSection">
+    <div id="listEmpty" class="empty">尚未导入图片 — 拖入、选择图片或选择文件夹</div>
+    <ul id="fileList" class="file-list"></ul>
+  </section>
+
+  <!-- 底部操作栏 -->
+  <section class="actionbar" id="actionbar">
+    <div class="stats" id="statsBar">0 张图片</div>
+    <div class="progress-wrap"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="actions">
+      <button type="button" class="btn primary" id="btnConvert">开始转换</button>
+      <button type="button" class="btn" id="btnCancel" disabled>取消</button>
+      <button type="button" class="btn accent" id="btnExportZip" disabled>下载 ZIP</button>
+      <button type="button" class="btn ghost" id="btnClearDone" disabled>移除已完成</button>
+      <button type="button" class="btn ghost" id="btnClearAll" disabled>全部清除</button>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  纯本地运行 · 图片不会上传到任何服务器 · 无网络请求 · 支持 Windows / Linux / Android
+</footer>
+
+<script>/* 纯逻辑引擎：UMD —— 浏览器挂 window.PI，Node 挂 module.exports */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.PI = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  // ---------- CRC32（查表法，IEEE 802.3）----------
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? (0xEDB88320 ^ (c >>> 1)) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32(bytes, start = 0, end = bytes.length) {
+    let c = 0xFFFFFFFF;
+    for (let i = start; i < end; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  // ---------- 工具 ----------
+  function u32be(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, false); return b; } // PNG 大端
+  function u16le(v) { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return b; }
+  const encoder = new TextEncoder();
+
+  // CompressionStream('deflate') = zlib 格式（PNG 用）；'deflate-raw' = 裸 deflate（ZIP 用）
+  async function deflate(bytes, format) {
+    const cs = new CompressionStream(format);
+    const writer = cs.writable.getWriter();
+    writer.write(bytes);
+    writer.close();
+    const reader = cs.readable.getReader();
+    const parts = [];
+    for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
+    const total = parts.reduce((n, p) => n + p.length, 0);
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+  const zlibDeflate = (bytes) => deflate(bytes, 'deflate');
+  const rawDeflate = (bytes) => deflate(bytes, 'deflate-raw');
+
+  // ---------- PNG 编码器 ----------
+  function pngChunk(type, data) {
+    const len = u32be(data.length); // PNG 规范：长度与 CRC 均为大端序
+    const typeBytes = encoder.encode(type);
+    const crcBuf = new Uint8Array(typeBytes.length + data.length);
+    crcBuf.set(typeBytes, 0); crcBuf.set(data, typeBytes.length);
+    const crc = u32be(crc32(crcBuf));
+    const out = new Uint8Array(12 + data.length);
+    out.set(len, 0); out.set(typeBytes, 4); out.set(data, 8); out.set(crc, 8 + data.length);
+    return out;
+  }
+
+  async function encodePng({ width, height, rgba, indices, palette, mode }) {
+    if (!width || !height) throw new Error('PNG 尺寸无效');
+    const channels = mode === 'rgba' ? 4 : mode === 'palette' ? 1 : 3;
+    const raw = new Uint8Array(height * (1 + width * channels));
+    let p = 0;
+    for (let y = 0; y < height; y++) {
+      raw[p++] = 0; // filter: None
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        if (mode === 'palette') {
+          raw[p++] = indices[i / 4];
+        } else if (mode === 'rgba') {
+          raw[p++] = rgba[i]; raw[p++] = rgba[i + 1]; raw[p++] = rgba[i + 2]; raw[p++] = rgba[i + 3];
+        } else { // rgb：alpha 与白色混合
+          const a = rgba[i + 3] / 255;
+          raw[p++] = Math.round(rgba[i] * a + 255 * (1 - a));
+          raw[p++] = Math.round(rgba[i + 1] * a + 255 * (1 - a));
+          raw[p++] = Math.round(rgba[i + 2] * a + 255 * (1 - a));
+        }
+      }
+    }
+    const idat = await zlibDeflate(raw);
+    const ihdr = new Uint8Array(13);
+    const dv = new DataView(ihdr.buffer);
+    dv.setUint32(0, width); dv.setUint32(4, height);
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = mode === 'rgba' ? 6 : mode === 'palette' ? 3 : 2;
+    ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+    const chunks = [pngChunk('IHDR', ihdr)];
+    if (mode === 'palette') {
+      const plte = new Uint8Array(palette.length * 3);
+      const trns = new Uint8Array(palette.length);
+      let hasTrns = false;
+      for (let i = 0; i < palette.length; i++) {
+        plte[i * 3] = palette[i][0]; plte[i * 3 + 1] = palette[i][1]; plte[i * 3 + 2] = palette[i][2];
+        trns[i] = palette[i][3];
+        if (palette[i][3] !== 255) hasTrns = true;
+      }
+      chunks.push(pngChunk('PLTE', plte));
+      if (hasTrns) chunks.push(pngChunk('tRNS', trns));
+    }
+    chunks.push(pngChunk('IDAT', idat));
+    chunks.push(pngChunk('IEND', new Uint8Array(0)));
+    const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const total = sig.length + chunks.reduce((n, c) => n + c.length, 0);
+    const out = new Uint8Array(total);
+    out.set(sig, 0);
+    let o = sig.length;
+    for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  }
+
+  // ---------- 中位切分量化 ----------
+  function boxScore(pix, rgba) {
+    let rmin = 255, rmax = 0, gmin = 255, gmax = 0, bmin = 255, bmax = 0;
+    for (const i of pix) {
+      const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+      if (r < rmin) rmin = r; if (r > rmax) rmax = r;
+      if (g < gmin) gmin = g; if (g > gmax) gmax = g;
+      if (b < bmin) bmin = b; if (b > bmax) bmax = b;
+    }
+    return (rmax - rmin) + (gmax - gmin) + (bmax - bmin);
+  }
+
+  function dominantChannel(pix, rgba) {
+    let rmin = 255, rmax = 0, gmin = 255, gmax = 0, bmin = 255, bmax = 0;
+    for (const i of pix) {
+      const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+      if (r < rmin) rmin = r; if (r > rmax) rmax = r;
+      if (g < gmin) gmin = g; if (g > gmax) gmax = g;
+      if (b < bmin) bmin = b; if (b > bmax) bmax = b;
+    }
+    const r = rmax - rmin, g = gmax - gmin, b = bmax - bmin;
+    return r >= g && r >= b ? 0 : g >= b ? 1 : 2;
+  }
+
+  function quantize(rgba, maxColors) {
+    const n = rgba.length / 4;
+    const transparent = [];
+    const opaque = [];
+    for (let i = 0; i < n; i++) {
+      if (rgba[i * 4 + 3] < 128) transparent.push(i);
+      else opaque.push(i);
+    }
+    const hasAlpha = transparent.length > 0;
+    const usable = hasAlpha ? Math.max(1, maxColors - 1) : maxColors;
+    const boxes = opaque.length ? [{ pix: opaque }] : [];
+    while (boxes.length < usable) {
+      let bestIdx = -1, bestScore = 0;
+      for (let b = 0; b < boxes.length; b++) {
+        if (boxes[b].pix.length < 2) continue;
+        const s = boxScore(boxes[b].pix, rgba);
+        if (s > bestScore) { bestScore = s; bestIdx = b; }
+      }
+      if (bestIdx === -1) break; // 无可再分（色差为 0）
+      const box = boxes[bestIdx];
+      const chan = dominantChannel(box.pix, rgba);
+      box.pix.sort((a, b) => rgba[a * 4 + chan] - rgba[b * 4 + chan]);
+      const mid = Math.floor(box.pix.length / 2);
+      boxes[bestIdx] = { pix: box.pix.slice(0, mid) };
+      boxes.push({ pix: box.pix.slice(mid) });
+    }
+    const palette = [];
+    const indices = new Uint8Array(n);
+    for (let b = 0; b < boxes.length; b++) {
+      const box = boxes[b];
+      let r = 0, g = 0, bl = 0;
+      for (const i of box.pix) { r += rgba[i * 4]; g += rgba[i * 4 + 1]; bl += rgba[i * 4 + 2]; }
+      const k = Math.max(1, box.pix.length);
+      palette.push([Math.round(r / k), Math.round(g / k), Math.round(bl / k), 255]);
+      for (const i of box.pix) indices[i] = b;
+    }
+    if (hasAlpha) {
+      const tIdx = palette.length;
+      palette.push([0, 0, 0, 0]);
+      for (const i of transparent) indices[i] = tIdx;
+    }
+    return { palette, indices };
+  }
+
+  // ---------- 反锐化掩模（两遍盒式模糊近似高斯 + 增强）----------
+  function unsharpMask(rgba, w, h, radius = 1, amount = 0.6) {
+    const n = w * h;
+    const tmp = new Float32Array(n * 3);
+    const blur = new Float32Array(n * 3);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          const x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1);
+          for (let c = 0; c < 3; c++) {
+            const s = rgba[(y * w + x0) * 4 + c] + rgba[i * 4 + c] + rgba[(y * w + x1) * 4 + c];
+            tmp[i * 3 + c] = s / 3;
+          }
+        }
+      }
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          const y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
+          for (let c = 0; c < 3; c++) {
+            const s = tmp[(y0 * w + x) * 3 + c] + tmp[i * 3 + c] + tmp[(y1 * w + x) * 3 + c];
+            blur[i * 3 + c] = s / 3;
+          }
+        }
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < 3; c++) {
+        const v = rgba[i * 4 + c] + amount * (rgba[i * 4 + c] - blur[i * 3 + c]);
+        rgba[i * 4 + c] = v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
+      }
+    }
+    return rgba;
+  }
+
+  // ---------- 自动对比度（亮度直方图百分位拉伸）----------
+  function autoContrast(rgba, w, h, lowPct = 0.02, highPct = 0.98) {
+    const n = w * h;
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < n; i++) {
+      const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+      hist[((r * 299 + g * 587 + b * 114) / 1000) | 0]++;
+    }
+    const total = n;
+    let lo = 0, acc = 0;
+    const lowTarget = total * lowPct;
+    for (; lo < 256; lo++) { acc += hist[lo]; if (acc >= lowTarget) break; }
+    let hi = 255; acc = 0;
+    const highTarget = total * (1 - highPct);
+    for (; hi > 0; hi--) { acc += hist[hi]; if (acc >= highTarget) break; }
+    if (hi - lo < 16) return rgba;
+    const scale = 255 / (hi - lo);
+    for (let i = 0; i < n * 4; i += 4) {
+      rgba[i] = Math.max(0, Math.min(255, Math.round((rgba[i] - lo) * scale)));
+      rgba[i + 1] = Math.max(0, Math.min(255, Math.round((rgba[i + 1] - lo) * scale)));
+      rgba[i + 2] = Math.max(0, Math.min(255, Math.round((rgba[i + 2] - lo) * scale)));
+    }
+    return rgba;
+  }
+
+  // ---------- ZIP 生成器（local header + raw deflate + central dir + EOCD）----------
+  async function buildZip(entries) {
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+    for (const e of entries) {
+      const nameBytes = encoder.encode(e.name);
+      const compressed = await rawDeflate(e.data);
+      const useStore = compressed.length >= e.data.length;
+      const dataBytes = useStore ? e.data : compressed;
+      const method = useStore ? 0 : 8;
+      const crc = crc32(e.data);
+      const size = e.data.length, csize = dataBytes.length;
+      const lh = new Uint8Array(30 + nameBytes.length);
+      const dv = new DataView(lh.buffer);
+      dv.setUint32(0, 0x04034b50, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(6, 0x0800, true); // UTF-8 文件名
+      dv.setUint16(8, method, true);
+      dv.setUint16(10, 0, true);
+      dv.setUint16(12, 0, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, csize, true);
+      dv.setUint32(22, size, true);
+      dv.setUint16(26, nameBytes.length, true);
+      dv.setUint16(28, 0, true);
+      lh.set(nameBytes, 30);
+      const body = new Uint8Array(30 + nameBytes.length + dataBytes.length);
+      body.set(lh, 0); body.set(dataBytes, 30 + nameBytes.length);
+      localParts.push(body);
+      const ch = new Uint8Array(46 + nameBytes.length);
+      const dv2 = new DataView(ch.buffer);
+      dv2.setUint32(0, 0x02014b50, true);
+      dv2.setUint16(4, 20, true);
+      dv2.setUint16(6, 20, true);
+      dv2.setUint16(8, 0x0800, true);
+      dv2.setUint16(10, method, true);
+      dv2.setUint16(12, 0, true);
+      dv2.setUint16(14, 0, true);
+      dv2.setUint32(16, crc, true);
+      dv2.setUint32(20, csize, true);
+      dv2.setUint32(24, size, true);
+      dv2.setUint16(28, nameBytes.length, true);
+      dv2.setUint16(30, 0, true);
+      dv2.setUint16(32, 0, true);
+      dv2.setUint16(34, 0, true);
+      dv2.setUint16(36, 0, true);
+      dv2.setUint32(38, 0, true);
+      dv2.setUint32(42, offset, true);
+      ch.set(nameBytes, 46);
+      centralParts.push(ch);
+      offset += body.length;
+    }
+    const centralSize = centralParts.reduce((n, c) => n + c.length, 0);
+    const eocd = new Uint8Array(22);
+    const dv3 = new DataView(eocd.buffer);
+    dv3.setUint32(0, 0x06054b50, true);
+    dv3.setUint16(4, 0, true);
+    dv3.setUint16(6, 0, true);
+    dv3.setUint16(8, entries.length, true);
+    dv3.setUint16(10, entries.length, true);
+    dv3.setUint32(12, centralSize, true);
+    dv3.setUint32(16, offset, true);
+    dv3.setUint16(20, 0, true);
+    const total = offset + centralSize + 22;
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const p of localParts) { out.set(p, o); o += p.length; }
+    for (const p of centralParts) { out.set(p, o); o += p.length; }
+    out.set(eocd, o);
+    return out;
+  }
+
+  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, zlibDeflate, rawDeflate };
+});
+</script>
+<script>'use strict';
+/* 浏览器端：UI 与处理管线。依赖 window.PI（logic.js） */
+(function () {
+  const $ = (sel, root = document) => root.querySelector(sel);
+
+  const state = {
+    items: [],
+    settings: { targetKB: 50, maxEdge: 240, aspect: '1:1', customAspect: '5:4', format: 'auto', enhance: true, tolerance: 2 },
+    converting: false,
+    cancel: false,
+    nextId: 1,
+  };
+  const SETTINGS_KEY = 'pi-settings-v1';
+  const IMAGE_RE = /\.(jpe?g|png|webp|bmp|gif|avif|svg)$/i;
+  const yieldUI = () => new Promise((r) => setTimeout(r, 0));
+
+  // ---------- 设置 ----------
+  function loadSettings() {
+    try {
+      const s = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+      if (s) Object.assign(state.settings, s);
+    } catch (e) { /* 忽略 */ }
+  }
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (e) { /* 忽略 */ }
+  }
+  function aspectRatio() {
+    const s = state.settings;
+    if (s.aspect === 'custom') {
+      const m = /^(\d+)\s*:\s*(\d+)$/.exec(s.customAspect);
+      if (!m) return [1, 1];
+      return [parseInt(m[1], 10), parseInt(m[2], 10)];
+    }
+    const [w, h] = s.aspect.split(':').map(Number);
+    return [w || 1, h || 1];
+  }
+  function currentSettings() {
+    const s = state.settings;
+    return {
+      targetBytes: Math.max(1, Math.round(s.targetKB * 1024)),
+      maxEdge: Math.max(32, Math.min(2048, Math.round(s.maxEdge))),
+      aspect: aspectRatio(),
+      format: s.format,
+      enhance: !!s.enhance,
+      tolerance: Math.max(0.5, Math.min(15, s.tolerance)) / 100,
+    };
+  }
+
+  // ---------- 导入 ----------
+  function isImageFile(f) { return IMAGE_RE.test(f.name); }
+
+  function pushItem(file, relPath) {
+    const name = relPath.split('/').pop();
+    state.items.push({
+      id: state.nextId++,
+      file, relPath, name,
+      origSize: file.size,
+      status: 'waiting', error: '', note: '',
+      resultBlob: null, resultSize: 0, outName: '',
+      thumbUrl: '',
+    });
+  }
+
+  function addFiles(files, baseRel = '') {
+    for (const f of files) {
+      if (!isImageFile(f)) continue;
+      pushItem(f, baseRel ? baseRel + f.name : f.name);
+    }
+    refresh();
+  }
+
+  function readAllEntries(dir) {
+    return new Promise((resolve) => {
+      const reader = dir.createReader();
+      const all = [];
+      (function readBatch() {
+        reader.readEntries((entries) => {
+          if (entries.length === 0) return resolve(all);
+          all.push(...entries);
+          readBatch();
+        }, () => resolve(all));
+      })();
+    });
+  }
+
+  async function addDirectoryEntries(entries, baseRel = '') {
+    for (const entry of entries) {
+      if (entry.isFile) {
+        const f = await new Promise((res) => entry.file(res, () => res(null)));
+        if (f && isImageFile(f)) pushItem(f, baseRel + f.name);
+      } else if (entry.isDirectory) {
+        const children = await readAllEntries(entry);
+        await addDirectoryEntries(children, baseRel + entry.name + '/');
+      }
+    }
+  }
+
+  function bindImport() {
+    $('#btnPickFiles').addEventListener('click', () => $('#fileInput').click());
+    $('#btnPickFolder').addEventListener('click', () => $('#folderInput').click());
+    const dz = $('#dropZone');
+    // 点击拖放区等同「选择图片」（按钮点击不触发）
+    dz.addEventListener('click', (e) => { if (e.target.closest('button')) return; $('#fileInput').click(); });
+    dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#fileInput').click(); } });
+    $('#fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+    // 文件夹输入：每个文件自带 webkitRelativePath（如 相册/a.jpg）
+    $('#folderInput').addEventListener('change', (e) => {
+      const files = Array.from(e.target.files).filter(isImageFile);
+      for (const f of files) pushItem(f, f.webkitRelativePath || f.name);
+      refresh();
+      e.target.value = '';
+    });
+    ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
+    ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
+    dz.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dz.classList.remove('drag');
+      const entries = [];
+      for (const it of e.dataTransfer.items) {
+        if (it.webkitGetAsEntry) { const en = it.webkitGetAsEntry(); if (en) entries.push(en); }
+      }
+      if (entries.length) await addDirectoryEntries(entries);
+      else addFiles(e.dataTransfer.files);
+      refresh();
+    });
+  }
+
+  // ---------- 列表渲染 ----------
+  function refresh() {
+    renderList();
+    updateStats();
+    updateButtons();
+  }
+
+  function renderList() {
+    const list = $('#fileList');
+    list.textContent = '';
+    $('#listEmpty').hidden = state.items.length > 0;
+    for (const item of state.items) list.appendChild(renderRow(item));
+  }
+
+  function renderRow(item) {
+    const li = document.createElement('li');
+    li.className = 'file-row';
+    li.dataset.id = item.id;
+
+    const thumb = document.createElement('img');
+    thumb.className = 'thumb';
+    thumb.alt = '';
+    if (!item.thumbUrl) item.thumbUrl = URL.createObjectURL(item.file);
+    thumb.src = item.thumbUrl;
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'name';
+    nameEl.textContent = item.name;
+    nameEl.title = item.relPath;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = fmtSize(item.origSize);
+    info.append(nameEl, meta);
+
+    const result = document.createElement('div');
+    result.className = 'result';
+    if (item.status === 'done') {
+      result.textContent = '→ ' + fmtSize(item.resultSize);
+      result.title = item.note || '';
+      if (item.note) result.textContent += ' (' + item.note + ')';
+    } else if (item.status === 'error') {
+      result.textContent = '失败：' + item.error;
+      result.style.color = 'var(--danger)';
+    }
+
+    const status = document.createElement('div');
+    status.className = 'status ' + item.status;
+    status.textContent = statusText(item.status);
+
+    const rowActions = document.createElement('div');
+    rowActions.className = 'row-actions';
+    const dl = document.createElement('button');
+    dl.type = 'button';
+    dl.className = 'icon-btn';
+    dl.textContent = '下载';
+    dl.disabled = item.status !== 'done';
+    dl.addEventListener('click', () => downloadBlob(item.resultBlob, item.outName));
+    rowActions.appendChild(dl);
+
+    li.append(thumb, info, result, status, rowActions);
+    return li;
+  }
+
+  function updateRow(item) {
+    const old = $('#fileList').querySelector('li[data-id="' + item.id + '"]');
+    if (old) old.replaceWith(renderRow(item));
+  }
+
+  function statusText(s) {
+    return { waiting: '等待', processing: '处理中…', done: '完成', error: '失败' }[s] || s;
+  }
+
+  function fmtSize(n) {
+    if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+    return n + ' B';
+  }
+
+  function updateStats() {
+    const done = state.items.filter((i) => i.status === 'done').length;
+    const failed = state.items.filter((i) => i.status === 'error').length;
+    $('#statsBar').textContent = `${state.items.length} 张 · 完成 ${done} · 失败 ${failed}`;
+    const total = state.items.length;
+    $('#progressFill').style.width = (total ? (done + failed) / total * 100 : 0) + '%';
+  }
+
+  function updateButtons() {
+    const has = state.items.length > 0;
+    const hasDone = state.items.some((i) => i.status === 'done');
+    $('#btnConvert').disabled = state.converting || !has;
+    $('#btnCancel').disabled = !state.converting;
+    $('#btnExportZip').disabled = !hasDone || state.converting;
+    $('#btnClearDone').disabled = !hasDone;
+    $('#btnClearAll').disabled = !has;
+  }
+
+  function removeItems(pred) {
+    for (const item of state.items) if (pred(item)) revokeItem(item);
+    state.items = state.items.filter((i) => !pred(i));
+    refresh();
+  }
+  function revokeItem(item) {
+    if (item.thumbUrl) { URL.revokeObjectURL(item.thumbUrl); item.thumbUrl = ''; }
+    item.resultBlob = null;
+  }
+
+  // ---------- 设置 UI ----------
+  function renderSettings() {
+    const s = state.settings;
+    $('#targetKB').value = s.targetKB;
+    $('#maxEdge').value = s.maxEdge;
+    $('#aspectSelect').value = s.aspect;
+    $('#customAspect').value = s.customAspect;
+    $('#customAspectWrap').hidden = s.aspect !== 'custom';
+    $('#formatSelect').value = s.format;
+    $('#tolerance').value = s.tolerance;
+    $('#enhanceToggle').checked = s.enhance;
+  }
+  function bindSettings() {
+    const set = (key, val) => { state.settings[key] = val; saveSettings(); };
+    $('#targetKB').addEventListener('change', (e) => set('targetKB', clampNum(e.target.value, 5, 5120, 50)));
+    $('#maxEdge').addEventListener('change', (e) => set('maxEdge', clampNum(e.target.value, 32, 2048, 240)));
+    $('#aspectSelect').addEventListener('change', (e) => {
+      set('aspect', e.target.value);
+      $('#customAspectWrap').hidden = e.target.value !== 'custom';
+    });
+    $('#customAspect').addEventListener('change', (e) => set('customAspect', e.target.value.trim()));
+    $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
+    $('#tolerance').addEventListener('change', (e) => set('tolerance', clampNum(e.target.value, 1, 10, 2)));
+    $('#enhanceToggle').addEventListener('change', (e) => set('enhance', e.target.checked));
+  }
+  function clampNum(v, min, max, fallback) {
+    const n = parseFloat(v);
+    if (!isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+  }
+
+  // ---------- 下载 ----------
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  // ---------- 解码 ----------
+  async function loadBitmap(file) {
+    try {
+      return await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch (e) {
+      const url = URL.createObjectURL(file);
+      try {
+        const img = new Image();
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+        return img;
+      } finally { URL.revokeObjectURL(url); }
+    }
+  }
+  function srcDims(src) {
+    const w = src.naturalWidth || src.width;
+    const h = src.naturalHeight || src.height;
+    return { w, h };
+  }
+
+  // 比例归一：过宽居中裁左右；过高按 3:7 裁上下（上 30% / 下 70%）
+  function computeCrop(srcW, srcH, [aW, aH]) {
+    let w = srcW, h = srcH, x = 0, y = 0;
+    const srcRatio = srcW / srcH;
+    const targetRatio = aW / aH;
+    if (srcRatio > targetRatio) {
+      w = Math.round(srcH * targetRatio);
+      x = Math.round((srcW - w) / 2);
+    } else if (srcRatio < targetRatio) {
+      h = Math.round(srcW / targetRatio);
+      y = Math.round((srcH - h) * 0.3);
+    }
+    return { x, y, w, h };
+  }
+
+  function outputDims(maxEdge, [aW, aH]) {
+    if (aW >= aH) return { w: maxEdge, h: Math.round(maxEdge * aH / aW) };
+    return { w: Math.round(maxEdge * aW / aH), h: maxEdge };
+  }
+
+  function drawCanvas(src, sx, sy, sw, sh, dw, dh) {
+    const canvas = document.createElement('canvas');
+    canvas.width = dw; canvas.height = dh;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, sx, sy, sw, sh, 0, 0, dw, dh);
+    return canvas;
+  }
+
+  function scaleCanvasByEdge(canvas, edge) {
+    const w = canvas.width, h = canvas.height;
+    let dw, dh;
+    if (w >= h) { dw = edge; dh = Math.max(1, Math.round(edge * h / w)); }
+    else { dh = edge; dw = Math.max(1, Math.round(edge * w / h)); }
+    if (dw === w && dh === h) return canvas;
+    return drawCanvas(canvas, 0, 0, w, h, dw, dh);
+  }
+
+  function enhanceCanvas(canvas) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const { width, height } = canvas;
+    const img = ctx.getImageData(0, 0, width, height);
+    PI.unsharpMask(img.data, width, height, 1, 0.6);
+    PI.autoContrast(img.data, width, height, 0.02, 0.98);
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // ---------- 编码到目标大小 ----------
+  function toBlobJpeg(canvas, q) {
+    return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', q / 100));
+  }
+
+  // JPEG：质量二分命中 [target*(1-tol), target*(1+tol)]；q=30 仍大则降分辨率（-12%/轮，下限 64）
+  async function jpegToTarget(canvas, targetBytes, tolerance, maxEdge) {
+    let cur = canvas;
+    let edge = maxEdge;
+    let best = null;
+    let bestDiff = Infinity;
+    for (;;) {
+      let lo = 30, hi = 95;
+      for (let i = 0; i < 10; i++) {
+        const q = Math.round((lo + hi) / 2);
+        const blob = await toBlobJpeg(cur, q);
+        const diff = Math.abs(blob.size - targetBytes);
+        if (diff < bestDiff) { bestDiff = diff; best = { blob, q, edge }; }
+        const low = targetBytes * (1 - tolerance);
+        const high = targetBytes * (1 + tolerance);
+        if (blob.size < low) lo = q + 1;
+        else if (blob.size > high) hi = q - 1;
+        else return { blob, q, edge };
+      }
+      if (edge <= 64) break;
+      edge = Math.round(edge * 0.88);
+      cur = scaleCanvasByEdge(canvas, edge);
+    }
+    return best;
+  }
+
+  // PNG：直通 RGB/RGBA → 调色板量化（256→128→64→32→16→8→4）→ 降分辨率；无损，≤ target*(1+tol)
+  async function pngToTarget(canvas, targetBytes, tolerance, maxEdge) {
+    const limit = targetBytes * (1 + tolerance);
+    const colorSteps = [256, 128, 64, 32, 16, 8, 4];
+    const getData = (c) => c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height);
+    let data = getData(canvas);
+    let hasAlpha = false;
+    for (let i = 3; i < data.data.length; i += 4) {
+      if (data.data[i] !== 255) { hasAlpha = true; break; }
+    }
+    const direct = await PI.encodePng({ width: data.width, height: data.height, rgba: data.data, mode: hasAlpha ? 'rgba' : 'rgb' });
+    if (direct.length <= limit) return new Blob([direct], { type: 'image/png' });
+    let lastBytes = direct;
+    for (const colors of colorSteps) {
+      const q = PI.quantize(data.data, colors);
+      lastBytes = await PI.encodePng({ width: data.width, height: data.height, indices: q.indices, palette: q.palette, mode: 'palette' });
+      if (lastBytes.length <= limit) return new Blob([lastBytes], { type: 'image/png' });
+    }
+    let edge = Math.min(data.width, data.height, maxEdge);
+    while (edge > 48) {
+      edge = Math.round(edge * 0.8);
+      const scaled = scaleCanvasByEdge(canvas, edge);
+      data = getData(scaled);
+      for (const colors of colorSteps) {
+        const q = PI.quantize(data.data, colors);
+        lastBytes = await PI.encodePng({ width: data.width, height: data.height, indices: q.indices, palette: q.palette, mode: 'palette' });
+        if (lastBytes.length <= limit) return new Blob([lastBytes], { type: 'image/png' });
+      }
+    }
+    return new Blob([lastBytes], { type: 'image/png' });
+  }
+
+  // ---------- 转换主流程 ----------
+  function extFor(settings, srcName) {
+    if (settings.format === 'png') return 'png';
+    if (settings.format === 'jpg') return 'jpg';
+    if (settings.format === 'jpeg') return 'jpeg';
+    return /\.png$/i.test(srcName) ? 'png' : 'jpg'; // auto：png 保留，其余转 jpg
+  }
+
+  async function convertOne(item) {
+    const s = currentSettings();
+    const src = await loadBitmap(item.file);
+    const { w: sw, h: sh } = srcDims(src);
+    const crop = computeCrop(sw, sh, s.aspect);
+    const out = outputDims(s.maxEdge, s.aspect);
+    let canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, out.w, out.h);
+    const needEnhance = s.enhance && Math.max(crop.w, crop.h) < s.maxEdge;
+    if (needEnhance) enhanceCanvas(canvas);
+    const ext = extFor(s, item.name);
+    if (ext === 'png') {
+      item.resultBlob = await pngToTarget(canvas, s.targetBytes, s.tolerance, s.maxEdge);
+    } else {
+      const r = await jpegToTarget(canvas, s.targetBytes, s.tolerance, s.maxEdge);
+      item.resultBlob = r.blob;
+      if (r.edge < s.maxEdge) item.note = '分辨率降至 ' + r.edge + 'px 以达目标';
+    }
+    item.resultSize = item.resultBlob.size;
+    item.outName = item.name.replace(/\.[^.]+$/, '') + '.' + ext;
+    item.status = 'done';
+  }
+
+  function friendlyError(err) {
+    const m = String(err && err.message || err);
+    if (/decode|load|image/i.test(m)) return '无法解码（HEIC 等格式请先转换为 JPEG/PNG）';
+    return m.slice(0, 120);
+  }
+
+  async function convertAll() {
+    if (state.converting) return;
+    state.converting = true;
+    state.cancel = false;
+    const pending = state.items.filter((i) => i.status === 'waiting' || i.status === 'error');
+    for (const item of pending) {
+      if (state.cancel) break;
+      item.status = 'processing';
+      item.error = '';
+      item.note = '';
+      updateRow(item);
+      await yieldUI();
+      try {
+        await convertOne(item);
+      } catch (err) {
+        item.status = 'error';
+        item.error = friendlyError(err);
+      }
+      updateRow(item);
+      updateStats();
+      updateButtons();
+    }
+    state.converting = false;
+    updateStats();
+    updateButtons();
+  }
+
+  // ---------- 动作绑定 ----------
+  function bindActions() {
+    $('#btnConvert').addEventListener('click', () => convertAll());
+    $('#btnCancel').addEventListener('click', () => { state.cancel = true; });
+    $('#btnClearDone').addEventListener('click', () => removeItems((i) => i.status === 'done'));
+    $('#btnClearAll').addEventListener('click', () => removeItems(() => true));
+    $('#btnExportZip').addEventListener('click', () => exportZip());
+  }
+
+  // ---------- 导出 ZIP ----------
+  // zip-slip 防护：去除盘符、前导斜杠、. 与 .. 片段
+  function sanitizeZipName(name) {
+    let n = String(name).replace(/\\/g, '/');
+    n = n.replace(/^[a-zA-Z]:\//, '').replace(/^\/+/, '');
+    n = n.split('/').filter((seg) => seg !== '..' && seg !== '.' && seg !== '').join('/');
+    return n || 'unnamed';
+  }
+
+  async function exportZip() {
+    const done = state.items.filter((i) => i.status === 'done');
+    if (!done.length) return;
+    const entries = [];
+    const used = new Set();
+    for (const item of done) {
+      let name = sanitizeZipName(item.relPath);
+      let uniq = name;
+      let k = 1;
+      while (used.has(uniq)) {
+        const dot = name.lastIndexOf('.');
+        uniq = dot > 0 ? name.slice(0, dot) + '_' + k + name.slice(dot) : name + '_' + k;
+        k++;
+      }
+      used.add(uniq);
+      entries.push({ name: uniq, data: new Uint8Array(await item.resultBlob.arrayBuffer()) });
+    }
+    const zip = await PI.buildZip(entries);
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadBlob(new Blob([zip], { type: 'application/zip' }), 'converted_' + stamp + '.zip');
+  }
+
+  // ---------- 启动：UI 立即可交互，引擎首帧后预热 ----------
+  function warmup() {
+    try {
+      const c = document.createElement('canvas');
+      c.width = 4; c.height = 4;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.getImageData(0, 0, 4, 4);
+    } catch (e) { /* 非致命 */ }
+    if (typeof CompressionStream === 'undefined') {
+      $('#btnExportZip').title = '当前浏览器不支持压缩流，ZIP 导出不可用';
+    }
+  }
+
+  function boot() {
+    loadSettings();
+    renderSettings();
+    bindImport();
+    bindSettings();
+    bindActions();
+    refresh();
+    requestAnimationFrame(() => setTimeout(warmup, 0));
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
+</body>
+</html>
