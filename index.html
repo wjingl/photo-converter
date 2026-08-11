@@ -32,10 +32,10 @@
   }
 }
 * { box-sizing: border-box; }
-/* 视觉隐藏（不用 display:none——避免部分浏览器对隐藏 file input 弹出普通文件选择器的怪癖） */
+/* 视觉隐藏：移出屏幕但保持 opacity:1 —— opacity:0 的 file input 在 Chrome/Edge 中 click() 可能不弹选择器 */
 .visually-hidden {
-  position: absolute; width: 1px; height: 1px; opacity: 0;
-  pointer-events: none; overflow: hidden; clip: rect(0 0 0 0);
+  position: absolute; left: -9999px; top: 0; width: 1px; height: 1px;
+  opacity: 1; pointer-events: none; overflow: hidden;
 }
 html, body { margin: 0; padding: 0; }
 body {
