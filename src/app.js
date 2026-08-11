@@ -178,28 +178,54 @@
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return; // 用户取消
-      $('#folderInput').click(); // API 不可用 → 回退传统目录选择
+      showPageError('目录选择器不可用：' + msg.slice(0, 120)); // 不再回退（webkitdirectory 在 file:// 不可靠）
     }
+  }
+
+  // 压缩包导入：LibArchive WASM 解压（zip/rar/7z/tar 等多格式）→ 按包内路径导入（保留文件夹结构）
+  // 含密码的压缩包 → 抛错提示；解压上限 128MB（防压缩炸弹）
+  async function importZipFile(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let entries;
+    try {
+      entries = await PI.parseZip(bytes); // ZIP 解析（含密码检测与 CRC 校验）
+    } catch (e) {
+      const msg = String(e && e.message || e);
+      if (/password|encrypted|password protected/i.test(msg)) {
+        showPageError('压缩包含密码保护，暂不支持（请先解压去除密码后再上传）');
+      } else {
+        showPageError('压缩包解析失败：' + msg.slice(0, 160));
+      }
+      return;
+    }
+    let added = 0;
+    for (const en of entries) {
+      const nm = en.name;
+      const base = nm.split('/').pop();
+      const ok = !nm.endsWith('/') && !!base && IMAGE_RE.test(base);
+      if (!ok) continue;
+      const f = new File([en.data], base);
+      try { Object.defineProperty(f, 'webkitRelativePath', { value: en.name }); } catch (e2) { /* 只读则忽略 */ }
+      pushItem(f, nm);
+      added++;
+    }
+    refresh();
+    if (!added) showPageError('压缩包中没有支持的图片（jpg/png/webp/bmp/gif/avif/svg）');
   }
 
   function bindImport() {
     $('#btnPickFiles').addEventListener('click', () => $('#fileInput').click());
-    // 文件夹选择：webkitdirectory input 为主（file:// 下最可靠，业界推荐）；
-    // 之前的失败是隐藏方式 bug（display:none/opacity:0）——现已修复为 off-screen+opacity:1；
-    // showDirectoryPicker 作为备用（若 webkitdirectory 仍弹不出）
-    $('#btnPickFolder').addEventListener('click', () => $('#folderInput').click());
+    // 压缩包上传（替代文件夹选择：file:// 下浏览器文件夹 API 受限，ZIP 上传最可靠）
+    $('#btnPickZip').addEventListener('click', () => $('#zipInput').click());
+    $('#zipInput').addEventListener('change', (e) => {
+      if (e.target.files.length) importZipFile(e.target.files[0]);
+      e.target.value = '';
+    });
     const dz = $('#dropZone');
     // 点击拖放区等同「选择图片」（按钮点击不触发）
     dz.addEventListener('click', (e) => { if (e.target.closest('button')) return; $('#fileInput').click(); });
     dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#fileInput').click(); } });
     $('#fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
-    // 文件夹输入：每个文件自带 webkitRelativePath（如 相册/a.jpg）
-    $('#folderInput').addEventListener('change', (e) => {
-      const files = Array.from(e.target.files).filter(isImageFile);
-      for (const f of files) pushItem(f, f.webkitRelativePath || f.name);
-      refresh();
-      e.target.value = '';
-    });
     ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
     ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
     dz.addEventListener('drop', async (e) => {
@@ -212,10 +238,16 @@
         // 不依赖 webkitGetAsEntry 递归（file:// 下 entry.file() 可能静默失败）
         const files = Array.from(e.dataTransfer.files);
         if (files.length) {
-          for (const f of files) {
-            if (isImageFile(f)) pushItem(f, f.webkitRelativePath || f.name);
+          // 压缩包优先：拖入 .zip → 解压导入
+          const zips = files.filter((f) => /\.zip$/i.test(f.name));
+          if (zips.length) {
+            await importZipFile(zips[0]);
+          } else {
+            for (const f of files) {
+              if (isImageFile(f)) pushItem(f, f.webkitRelativePath || f.name);
+            }
+            refresh();
           }
-          refresh();
         } else {
           // 方案 2（首选句柄）：getAsFileSystemHandle —— 拖文件夹的现代可靠路径
           const handles = [];

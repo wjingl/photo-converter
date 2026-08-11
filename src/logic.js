@@ -265,6 +265,65 @@
     return rgba;
   }
 
+  // ---------- ZIP 解析（与 buildZip 对称；原生 DecompressionStream 解压）----------
+  async function parseZip(bytes) {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // 1) 从尾部找 EOCD（签名 0x06054b50）
+    let eocd = -1;
+    for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('不是有效的 ZIP 文件');
+    const count = dv.getUint16(eocd + 10, true);
+    const cdOff = dv.getUint32(eocd + 16, true);
+    // 2) 中央目录
+    const entries = [];
+    let off = cdOff;
+    for (let e = 0; e < count; e++) {
+      if (dv.getUint32(off, true) !== 0x02014b50) throw new Error('ZIP 中央目录损坏');
+      const flags = dv.getUint16(off + 8, true);
+      if (flags & 0x0001) throw new Error('压缩包含密码保护，暂不支持（请先解压去除密码后再上传）');
+      const method = dv.getUint16(off + 10, true);
+      const crc = dv.getUint32(off + 16, true);
+      const csize = dv.getUint32(off + 20, true);
+      const usize = dv.getUint32(off + 24, true);
+      const nameLen = dv.getUint16(off + 28, true);
+      const extraLen = dv.getUint16(off + 30, true);
+      const commentLen = dv.getUint16(off + 32, true);
+      const localOff = dv.getUint32(off + 42, true);
+      const name = new TextDecoder().decode(bytes.subarray(off + 46, off + 46 + nameLen));
+      // 3) 本地头定位数据
+      const lNameLen = dv.getUint16(localOff + 26, true);
+      const lExtraLen = dv.getUint16(localOff + 28, true);
+      const dataStart = localOff + 30 + lNameLen + lExtraLen;
+      const comp = bytes.subarray(dataStart, dataStart + csize);
+      // 4) 解压（method 8 deflate / 0 store）
+      let raw;
+      if (method === 8) {
+        const ds = new DecompressionStream('deflate-raw');
+        const writer = ds.writable.getWriter();
+        writer.write(comp);
+        writer.close();
+        const reader = ds.readable.getReader();
+        const parts = [];
+        for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
+        const total = parts.reduce((n, p) => n + p.length, 0);
+        raw = new Uint8Array(total);
+        let o = 0;
+        for (const p of parts) { raw.set(p, o); o += p.length; }
+      } else if (method === 0) {
+        raw = comp;
+      } else {
+        throw new Error('不支持的压缩方式: ' + method);
+      }
+      if (raw.length !== usize) throw new Error('ZIP 解压大小不符: ' + name);
+      if (crc32(raw) !== crc) throw new Error('ZIP CRC 校验失败: ' + name);
+      entries.push({ name, data: raw });
+      off += 46 + nameLen + extraLen + commentLen;
+    }
+    return entries;
+  }
+
   // ---------- JPEG 像素密度写入（JFIF APP0，units=1 dots/inch）----------
   // 已含 JFIF APP0 则改写 density；否则在 SOI 后插入标准 APP0 段。
   // 不改变像素数据 → 文件大小不变。
@@ -384,5 +443,5 @@
     return out;
   }
 
-  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, parseZip, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
 });

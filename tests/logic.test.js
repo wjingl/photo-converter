@@ -240,6 +240,48 @@ test('autoContrast: 反差已足够时不变', () => {
   assert.deepStrictEqual(Array.from(rgba), before);
 });
 
+// ---------- ZIP 解析（与 buildZip 对称）----------
+test('parseZip: buildZip→parseZip 往返一致（含中文名与子目录）', async () => {
+  const data1 = new TextEncoder().encode('照片内容一号');
+  const data2 = new Uint8Array(5000).map((_, i) => (i * 13) % 256);
+  const zip = await PI.buildZip([
+    { name: '相册/风景 001.jpg', data: data1 },
+    { name: '子目录/随机.bin', data: data2 },
+  ]);
+  const entries = await PI.parseZip(zip);
+  assert.strictEqual(entries.length, 2);
+  assert.strictEqual(entries[0].name, '相册/风景 001.jpg');
+  assert.deepStrictEqual(Array.from(entries[0].data), Array.from(data1));
+  assert.deepStrictEqual(Array.from(entries[1].data), Array.from(data2));
+});
+
+test('parseZip: store 模式（不可压缩数据）也能解析', async () => {
+  const data = new Uint8Array(3000).map((_, i) => i % 251); // 难压缩 → store
+  const zip = await PI.buildZip([{ name: 'rand.bin', data }]);
+  const entries = await PI.parseZip(zip);
+  assert.strictEqual(entries.length, 1);
+  assert.deepStrictEqual(Array.from(entries[0].data), Array.from(data));
+});
+
+test('parseZip: 损坏数据报错', async () => {
+  const junk = new Uint8Array(100).fill(7);
+  await assert.rejects(() => PI.parseZip(junk), /ZIP/);
+});
+
+test('parseZip: 与 Python zipfile 交叉验证', async () => {
+  const { spawnSync } = require('node:child_process');
+  const fs = require('node:fs');
+  const data = new TextEncoder().encode('python 交叉验证解析');
+  const zip = await PI.buildZip([{ name: 'py/解析测试.txt', data }]);
+  fs.mkdirSync('tests/out', { recursive: true });
+  fs.writeFileSync('tests/out/parse-cross.zip', zip);
+  const py = spawnSync('python', ['-c',
+    'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); assert z.read("py/解析测试.txt").decode()=="python 交叉验证解析"; print("PYPARSE_OK")',
+    'tests/out/parse-cross.zip'], { encoding: 'utf8' });
+  assert.strictEqual(py.status, 0, `python: ${py.stdout}${py.stderr}`);
+  assert.match(py.stdout, /PYPARSE_OK/);
+});
+
 // ---------- 像素密度元数据 ----------
 test('setJpegDensity: 已有 APP0 时改写 density', () => {
   // 构造最小 JPEG：SOI + JFIF APP0（density=72）+ EOI

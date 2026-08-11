@@ -23,7 +23,7 @@ async function main() {
   if (!BROWSER) throw new Error('未找到浏览器，请显式传入：node tools/e2e-run.js <浏览器路径>');
   const root = path.join(__dirname, '..');
   const pageUrl = 'file:///' + path.join(root, 'tests', 'out', 'e2e.html').replace(/\\/g, '/');
-  const profileDir = path.join(root, 'tests', 'out', 'edge-profile');
+  const profileDir = path.join(root, 'tests', 'out', 'edge-profile-' + process.pid);
   const dlDir = path.join(root, 'tests', 'out', 'downloads');
   fs.rmSync(profileDir, { recursive: true, force: true });
   fs.rmSync(dlDir, { recursive: true, force: true });
@@ -73,11 +73,17 @@ async function main() {
 
     // 轮询直到驱动完成（真实时间，最多 300s）
     let done = false;
-    for (let i = 0; i < 600 && !done; i++) {
+    for (let i = 0; i < 1600 && !done; i++) {
       try { done = (await evaluate('document.title')) === 'E2E_DONE'; } catch (e) { /* 忽略 */ }
       if (!done) await sleep(500);
     }
-    if (!done) throw new Error('E2E 超时（300s）未完成');
+    if (!done) {
+      const started = await evaluate('window.__e2eStarted === true');
+      const fatal = await evaluate('window.__e2eFatal || \'无致命错误\'');
+      const pageTitle = await evaluate('document.title');
+      const progress = await evaluate('window.__e2eProgress || "无进度"');
+      throw new Error('E2E 超时（300s）未完成 | started=' + started + ' progress=' + progress + ' title=' + pageTitle + ' fatal=' + String(fatal).slice(0, 300));
+    }
 
     const report = await evaluate(`(() => { const el = document.querySelector('#e2e-report'); return el ? el.textContent : '无报告'; })()`);
     console.log(report);

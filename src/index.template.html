@@ -20,13 +20,13 @@
   <section id="dropZone" tabindex="0" role="button" aria-label="拖入图片或文件夹">
     <div class="drop-icon">⬆</div>
     <p class="drop-title">拖入图片或文件夹到此处</p>
-    <p class="drop-sub">或点击下方按钮选择 · 支持整文件夹（含子文件夹）</p>
+    <p class="drop-sub">或点击下方按钮选择 · 支持压缩包上传（保留文件夹结构）</p>
     <div class="drop-actions">
       <button type="button" class="btn primary" id="btnPickFiles">选择图片</button>
-      <button type="button" class="btn" id="btnPickFolder">选择文件夹</button>
+      <button type="button" class="btn" id="btnPickZip">上传压缩包</button>
     </div>
     <input type="file" id="fileInput" multiple accept="image/*" class="visually-hidden">
-    <input type="file" id="folderInput" webkitdirectory directory multiple class="visually-hidden">
+    <input type="file" id="zipInput" accept=".zip,application/zip" class="visually-hidden">
   </section>
 
   <!-- 设置 -->

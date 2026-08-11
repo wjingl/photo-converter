@@ -49,6 +49,7 @@ const DRIVER = `
     const pageErrors = [];
     window.addEventListener('error', (e) => pageErrors.push('error: ' + e.message));
     try {
+      window.__e2eStarted = true;
       // 0. 等待 app 的 boot()（挂在 DOMContentLoaded）完成再开始
       await new Promise((res) => {
         if (document.readyState !== 'loading') res();
@@ -63,6 +64,19 @@ const DRIVER = `
         '设置默认物理尺寸 1.2 × 1.8 cm');
       report(!document.querySelector('#dpi') && !document.querySelector('#maxEdge'),
         '无像素精度/最大边长配置（DPI 由目标大小实时演算）');
+      // PI 完整性自测
+      {
+        let selfTest = '无';
+        try {
+          const zip = await PI.buildZip([{ name: 'a.png', data: new Uint8Array(50).fill(1) }]);
+          const parsed = await PI.parseZip(zip);
+          selfTest = 'OK entries=' + parsed.length + ' name=' + parsed[0].name;
+        } catch (e) { selfTest = 'ERR:' + String(e).slice(0, 120); }
+        report(selfTest === 'OK entries=1 name=a.png', 'PI buildZip+parseZip 自测: ' + selfTest);
+      }
+      // 运行时诊断：readyState / ArchiveWasm / boot 痕迹
+      report(document.readyState, 'readyState=' + document.readyState + ' ArchiveWasm=' + typeof window.ArchiveWasm +
+        ' themeSelect=' + (document.querySelector('#themeSelect') ? '存在' : '缺失'));
       // 主题切换：亮/暗/跟随系统
       {
         const sel = document.querySelector('#themeSelect');
@@ -138,17 +152,33 @@ const DRIVER = `
       }
 
       async function importFiles(files) {
+        // 与用户一致：把全部文件打包为 ZIP（含文件夹路径）后上传解压导入
+        window.__e2eProgress = 'import:arrayBuffer';
+        const entries = [];
+        for (const f of files) {
+          entries.push({ name: f.webkitRelativePath || f.name, data: new Uint8Array(await f.arrayBuffer()) });
+        }
+        window.__e2eProgress = 'import:buildZip';
+        const zip = await PI.buildZip(entries);
+        window.__e2eProgress = 'import:zip=' + zip.length;
+        const zipFile = new File([zip], 'test-pack.zip', { type: 'application/zip' });
         const dt = new DataTransfer();
-        for (const f of files) dt.items.add(f);
-        let importErr = '';
-        const folderInput = document.querySelector('#folderInput');
-        try { folderInput.files = dt.files; } catch (e) { importErr = e.message; }
-        report(folderInput.files.length === files.length,
-          'DataTransfer 注入 ' + folderInput.files.length + ' 个文件 (err: ' + importErr + ')');
-        folderInput.dispatchEvent(new Event('change', { bubbles: true }));
-        await tick(300);
+        dt.items.add(zipFile);
+        const zipInput = document.querySelector('#zipInput');
+        zipInput.files = dt.files;
+        zipInput.dispatchEvent(new Event('change', { bubbles: true }));
+        // 导入是异步的（解压+渲染）——轮询等待真正完成
+        const imported = await waitUntil(
+          () => document.querySelectorAll('.file-row').length === files.length,
+          180000, 'ZIP 导入'
+        );
+        window.__e2eProgress = 'import:afterChange rows=' + document.querySelectorAll('.file-row').length;
         const rows = document.querySelectorAll('.file-row');
-        report(rows.length === files.length, '导入图片 ' + rows.length + ' 张');
+        const errBar = document.getElementById('pageError');
+        report(!!imported && rows.length === files.length,
+          'ZIP 上传导入 ' + rows.length + ' 张（含文件夹结构）' + (errBar ? ' | 红条: ' + errBar.textContent : '') +
+          ' | progress=' + (window.__e2eProgress || '') +
+          ' | filter=' + ((window.__e2eFilter || []).join(';')).slice(0, 300));
       }
 
       async function makeFixtureFiles() {
@@ -177,6 +207,7 @@ const DRIVER = `
         report([...document.querySelectorAll('.file-row')].every((r) => !!r.querySelector('.row-progress')),
           '每行均有独立进度条');
         document.querySelector('#btnConvert').click();
+        window.__e2eProgress = 'convert:round=' + targetKB;
         // 并发确认：轮询捕获同刻处理中的行数（≥2 即证明并行）
         let maxProcessing = 0;
         let sawProgress = false;
@@ -430,6 +461,7 @@ const DRIVER = `
       // 轮 3：256 KB（大目标 → 验证演算上限随目标增大、大像素命中）
       await convertRound(256, ['photo-input.jpg'], false);
     } catch (e) {
+      window.__e2eFatal = String(e && e.stack || e);
       report(false, '驱动异常: ' + e.message + ' | ' + (e.stack || '').split('\\n')[0]);
     }
     if (pageErrors.length) report(false, '页面 JS 错误: ' + pageErrors.join(' | '));
