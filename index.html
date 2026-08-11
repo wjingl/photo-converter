@@ -1100,7 +1100,10 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
   // file:// 属于安全上下文，Chrome/Edge 86+ 可用；不可用时回退 webkitdirectory input
   async function walkDirHandle(handle, base, files, diag) {
     let count = 0;
-    for await (const entry of handle.values()) {
+    const it = handle.values();
+    let next = await it.next();
+    while (!next.done) {
+      const entry = next.value;
       count++;
       diag.push(entry.name + ' [kind=' + entry.kind + ']');
       if (entry.kind === 'file') {
@@ -1120,6 +1123,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       } else {
         diag.push('  - 未知 kind');
       }
+      next = await it.next();
     }
     diag.push('目录 [' + (handle.name || '?') + '] 共 ' + count + ' 个条目');
   }
@@ -1128,13 +1132,17 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       const dir = await window.showDirectoryPicker({ mode: 'read' });
       const files = [];
       const diag = [];
+      // 显式确认读取权限（权限框已允许则直接 granted）
+      let perm = 'granted';
+      try { perm = await dir.requestPermission({ mode: 'read' }); } catch (e) { perm = '请求异常: ' + (e && e.message || e); }
+      diag.push('权限=' + perm);
       await walkDirHandle(dir, '', files, diag);
-      showPageError('目录[' + dir.name + '] 诊断: ' + diag.join(' | ').slice(0, 300));
       if (files.length) {
         for (const f of files) pushItem(f, f.webkitRelativePath || f.name);
         refresh();
       } else {
-        showPageError('所选文件夹中未找到支持的图片（jpg/png/webp/bmp/gif/avif/svg）');
+        // 诊断合并进最终提示（不再被覆盖）
+        showPageError('未找到支持的图片（诊断: ' + diag.join(' | ').slice(0, 300) + '）');
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return; // 用户取消
