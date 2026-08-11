@@ -178,13 +178,25 @@
 
     const rowActions = document.createElement('div');
     rowActions.className = 'row-actions';
+    const pv = document.createElement('button');
+    pv.type = 'button';
+    pv.className = 'icon-btn';
+    pv.textContent = '预览';
+    pv.disabled = item.status !== 'done';
+    pv.addEventListener('click', () => openPreview(item));
+    const rc = document.createElement('button');
+    rc.type = 'button';
+    rc.className = 'icon-btn';
+    rc.textContent = '重转';
+    rc.disabled = state.converting;
+    rc.addEventListener('click', () => reconvertOne(item));
     const dl = document.createElement('button');
     dl.type = 'button';
     dl.className = 'icon-btn';
     dl.textContent = '下载';
     dl.disabled = item.status !== 'done';
     dl.addEventListener('click', () => downloadBlob(item.resultBlob, item.outName));
-    rowActions.appendChild(dl);
+    rowActions.append(pv, rc, dl);
 
     li.append(thumb, info, result, status, rowActions);
     return li;
@@ -216,8 +228,10 @@
   function updateButtons() {
     const has = state.items.length > 0;
     const hasDone = state.items.some((i) => i.status === 'done');
+    const hasResult = state.items.some((i) => i.status === 'done' || i.status === 'error');
     $('#btnConvert').disabled = state.converting || !has;
     $('#btnCancel').disabled = !state.converting;
+    $('#btnReconvert').disabled = state.converting || !hasResult;
     $('#btnExportZip').disabled = !hasDone || state.converting;
     $('#btnClearDone').disabled = !hasDone;
     $('#btnClearAll').disabled = !has;
@@ -233,6 +247,37 @@
     item.resultBlob = null;
   }
 
+  // ---------- 预览 ----------
+  let previewModal = null;
+  function openPreview(item) {
+    closePreview();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const box = document.createElement('div');
+    box.className = 'modal-box';
+    const img = document.createElement('img');
+    img.className = 'modal-img';
+    if (item.resultBlob) img.src = URL.createObjectURL(item.resultBlob);
+    else img.src = item.thumbUrl;
+    img.alt = item.name;
+    const meta = document.createElement('div');
+    meta.className = 'modal-meta';
+    meta.textContent = (item.outName || item.name) + ' · ' + fmtSize(item.resultSize || item.origSize);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'btn';
+    close.textContent = '关闭';
+    close.addEventListener('click', closePreview);
+    box.append(img, meta, close);
+    overlay.appendChild(box);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closePreview(); });
+    document.body.appendChild(overlay);
+    previewModal = overlay;
+  }
+  function closePreview() {
+    if (previewModal) { previewModal.remove(); previewModal = null; }
+  }
+
   // ---------- 设置 UI ----------
   function renderSettings() {
     const s = state.settings;
@@ -240,7 +285,7 @@
     $('#maxEdge').value = s.maxEdge;
     $('#aspectSelect').value = s.aspect;
     $('#customAspect').value = s.customAspect;
-    $('#customAspectWrap').hidden = s.aspect !== 'custom';
+    $('#customAspect').hidden = s.aspect !== 'custom';
     $('#formatSelect').value = s.format;
     $('#tolerance').value = s.tolerance;
     $('#enhanceToggle').checked = s.enhance;
@@ -251,7 +296,7 @@
     $('#maxEdge').addEventListener('change', (e) => set('maxEdge', clampNum(e.target.value, 32, 2048, 240)));
     $('#aspectSelect').addEventListener('change', (e) => {
       set('aspect', e.target.value);
-      $('#customAspectWrap').hidden = e.target.value !== 'custom';
+      $('#customAspect').hidden = e.target.value !== 'custom';
     });
     $('#customAspect').addEventListener('change', (e) => set('customAspect', e.target.value.trim()));
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
@@ -304,12 +349,41 @@
   }
 
   function drawCanvas(src, sx, sy, sw, sh, dw, dh) {
+    // 先按源分辨率裁剪（保留最大信息）
+    const crop = document.createElement('canvas');
+    crop.width = sw; crop.height = sh;
+    const cctx = crop.getContext('2d');
+    cctx.imageSmoothingEnabled = true;
+    cctx.imageSmoothingQuality = 'high';
+    cctx.drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh);
+    // 分步降采样：每次最多缩小 2 倍，避免大步长采样失真（画质关键）
+    if (sw / dw > 2 || sh / dh > 2) {
+      let cw = sw, ch = sh, tmp = crop;
+      while (cw / dw > 2 || ch / dh > 2) {
+        cw = Math.max(dw, Math.round(cw / 2));
+        ch = Math.max(dh, Math.round(ch / 2));
+        const c = document.createElement('canvas');
+        c.width = cw; c.height = ch;
+        const ctx = c.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(tmp, 0, 0, cw, ch);
+        tmp = c;
+      }
+      const out = document.createElement('canvas');
+      out.width = dw; out.height = dh;
+      const octx = out.getContext('2d', { willReadFrequently: true });
+      octx.imageSmoothingEnabled = true;
+      octx.imageSmoothingQuality = 'high';
+      octx.drawImage(tmp, 0, 0, dw, dh);
+      return out;
+    }
     const canvas = document.createElement('canvas');
     canvas.width = dw; canvas.height = dh;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(src, sx, sy, sw, sh, 0, 0, dw, dh);
+    ctx.drawImage(crop, 0, 0, dw, dh);
     return canvas;
   }
 
@@ -326,8 +400,8 @@
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const { width, height } = canvas;
     const img = ctx.getImageData(0, 0, width, height);
-    PI.unsharpMask(img.data, width, height, 1, 0.6);
-    PI.autoContrast(img.data, width, height, 0.02, 0.98);
+    PI.unsharpMask(img.data, width, height, 1, 0.4); // 温和锐化，避免噪点放大
+    PI.autoContrast(img.data, width, height, 0.01, 0.99); // 保守对比度拉伸
     ctx.putImageData(img, 0, 0);
   }
 
@@ -336,69 +410,67 @@
     return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', q / 100));
   }
 
-  // JPEG：质量二分命中 [target*(1-tol), target*(1+tol)]；耗尽后朝目标方向微调；q=30 仍大则降分辨率（-12%/轮，下限 64）
+  // JPEG（质量优先）：每个分辨率档位下：
+  //   1) q95 ≤ 上限 → 触顶，直接输出（保持最大分辨率与最高画质）
+  //   2) 二分 [60,95] 找 ≤ 上限的最大质量 → 输出
+  //   3) q60 仍超限 → 降分辨率重试（宁可小一点，也不要低画质）
+  // 硬约束：结果 ≤ 目标×(1+容差)
   async function jpegToTarget(canvas, targetBytes, tolerance, maxEdge) {
-    const low = targetBytes * (1 - tolerance);
     const high = targetBytes * (1 + tolerance);
-    let cur = canvas;
-    let edge = maxEdge;
     let best = null;
     let bestDiff = Infinity;
-    for (;;) {
-      let lo = 30, hi = 95;
-      for (let i = 0; i < 16; i++) {
-        const q = Math.round((lo + hi) / 2);
-        const blob = await toBlobJpeg(cur, q);
+    let edge = maxEdge;
+    while (edge >= 48) {
+      const cur = edge === maxEdge ? canvas : scaleCanvasByEdge(canvas, edge);
+      const track = (blob, q) => {
         const diff = Math.abs(blob.size - targetBytes);
         if (diff < bestDiff) { bestDiff = diff; best = { blob, q, edge }; }
-        if (blob.size < low) lo = q + 1;
-        else if (blob.size > high) hi = q - 1;
-        else return { blob, q, edge };
-      }
-      // 耗尽未命中：不超上限是硬约束。
-      // 1) best ≤ 上限（触顶或略低）：已是最接近，直接返回
-      if (best.blob.size <= high) return best;
-      // 2) best 超上限：向下线性扫描，输出 ≤ 上限的最接近档（应对小图尺寸跳跃）
-      for (let q = best.q - 1; q >= 30; q--) {
+      };
+      // 1) 触顶检查：当前分辨率下最高质量即可满足 → 输出（不再降分辨率）
+      const q95 = await toBlobJpeg(cur, 95);
+      track(q95, 95);
+      if (q95.size <= high) return best;
+      // 2) 二分 [60,95] 找 ≤ 上限的最大质量（画质下限 60，绝不低于此质量压缩）
+      let lo = 60, hi = 95;
+      let found = null;
+      for (let i = 0; i < 12; i++) {
+        const q = Math.round((lo + hi) / 2);
         const blob = await toBlobJpeg(cur, q);
-        if (blob.size <= high) return { blob, q, edge };
+        track(blob, q);
+        if (blob.size <= high) { found = { blob, q }; lo = q + 1; }
+        else hi = q - 1;
       }
-      // 3) q=30 仍超限：降分辨率重试
-      if (edge <= 64) return best; // 触底：返回最接近（尽力而为）
-      edge = Math.round(edge * 0.88);
-      cur = scaleCanvasByEdge(canvas, edge);
+      if (found) return { blob: found.blob, q: found.q, edge };
+      // 3) 当前分辨率无解（q60 都超限）→ 降分辨率（-20%/档）
+      edge = Math.round(edge * 0.8);
     }
-    return best;
+    return best; // 触底兜底：返回全程最接近（理论上不会发生）
   }
 
-  // PNG：直通 RGB/RGBA → 调色板量化（256→128→64→32→16→8→4）→ 降分辨率；无损，≤ target*(1+tol)
+  // PNG（画质优先）：直通 → 调色板量化（下限 16 色，避免色带）→ 降分辨率（-25%/档）
+  // 无损，硬约束：结果 ≤ target*(1+tol)
   async function pngToTarget(canvas, targetBytes, tolerance, maxEdge) {
     const limit = targetBytes * (1 + tolerance);
-    const colorSteps = [256, 128, 64, 32, 16, 8, 4];
+    const colorSteps = [256, 128, 64, 32, 16];
     const getData = (c) => c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height);
-    let data = getData(canvas);
-    let hasAlpha = false;
-    for (let i = 3; i < data.data.length; i += 4) {
-      if (data.data[i] !== 255) { hasAlpha = true; break; }
-    }
-    const direct = await PI.encodePng({ width: data.width, height: data.height, rgba: data.data, mode: hasAlpha ? 'rgba' : 'rgb' });
-    if (direct.length <= limit) return new Blob([direct], { type: 'image/png' });
-    let lastBytes = direct;
-    for (const colors of colorSteps) {
-      const q = PI.quantize(data.data, colors);
-      lastBytes = await PI.encodePng({ width: data.width, height: data.height, indices: q.indices, palette: q.palette, mode: 'palette' });
-      if (lastBytes.length <= limit) return new Blob([lastBytes], { type: 'image/png' });
-    }
-    let edge = Math.min(data.width, data.height, maxEdge);
-    while (edge > 48) {
-      edge = Math.round(edge * 0.8);
-      const scaled = scaleCanvasByEdge(canvas, edge);
-      data = getData(scaled);
+    let edge = maxEdge;
+    let lastBytes = null;
+    while (edge >= 32) {
+      const cur = edge === maxEdge ? canvas : scaleCanvasByEdge(canvas, edge);
+      const data = getData(cur);
+      let hasAlpha = false;
+      for (let i = 3; i < data.data.length; i += 4) {
+        if (data.data[i] !== 255) { hasAlpha = true; break; }
+      }
+      const direct = await PI.encodePng({ width: data.width, height: data.height, rgba: data.data, mode: hasAlpha ? 'rgba' : 'rgb' });
+      lastBytes = direct;
+      if (direct.length <= limit) return new Blob([direct], { type: 'image/png' });
       for (const colors of colorSteps) {
         const q = PI.quantize(data.data, colors);
         lastBytes = await PI.encodePng({ width: data.width, height: data.height, indices: q.indices, palette: q.palette, mode: 'palette' });
         if (lastBytes.length <= limit) return new Blob([lastBytes], { type: 'image/png' });
       }
+      edge = Math.round(edge * 0.75);
     }
     return new Blob([lastBytes], { type: 'image/png' });
   }
@@ -466,10 +538,38 @@
     updateButtons();
   }
 
+  // ---------- 重新转换 ----------
+  async function reconvertAll() {
+    if (state.converting) return;
+    for (const item of state.items) {
+      item.status = 'waiting';
+      item.error = '';
+      item.note = '';
+      item.resultBlob = null;
+      item.resultSize = 0;
+      item.outName = '';
+    }
+    refresh();
+    await convertAll();
+  }
+
+  async function reconvertOne(item) {
+    if (state.converting) return;
+    item.status = 'waiting';
+    item.error = '';
+    item.note = '';
+    item.resultBlob = null;
+    item.resultSize = 0;
+    item.outName = '';
+    updateRow(item);
+    await convertAll(); // 只处理 waiting/error 项
+  }
+
   // ---------- 动作绑定 ----------
   function bindActions() {
     $('#btnConvert').addEventListener('click', () => convertAll());
     $('#btnCancel').addEventListener('click', () => { state.cancel = true; });
+    $('#btnReconvert').addEventListener('click', () => reconvertAll());
     $('#btnClearDone').addEventListener('click', () => removeItems((i) => i.status === 'done'));
     $('#btnClearAll').addEventListener('click', () => removeItems(() => true));
     $('#btnExportZip').addEventListener('click', () => exportZip());

@@ -4,14 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<meta name="description" content="本地批量图片转换：统一大小与比例，无网络">
+<meta name="description" content="批量图片转换：统一大小与比例">
 <title>图片批量转换 · 统一大小</title>
 <!--STYLE-->
 </head>
 <body>
 <header class="topbar">
   <h1>图片批量转换</h1>
-  <span class="local-badge">纯本地 · 零联网</span>
 </header>
 
 <main>
@@ -44,13 +43,7 @@
           <option value="16:9">16:9</option>
           <option value="custom">自定义</option>
         </select>
-      </label>
-      <label class="field custom-aspect" id="customAspectWrap" hidden>
-        <input type="text" id="customAspect" placeholder="如 5:4" value="5:4">
-      </label>
-      <label class="field">最长边
-        <input type="number" id="maxEdge" min="32" max="2048" step="1" value="240">
-        <span class="unit">px</span>
+        <input type="text" id="customAspect" placeholder="如 5:4" value="5:4" hidden>
       </label>
       <label class="field">输出格式
         <select id="formatSelect">
@@ -60,13 +53,22 @@
           <option value="png">PNG（.png）</option>
         </select>
       </label>
-      <label class="field">容差
-        <input type="number" id="tolerance" min="1" max="10" step="1" value="2">
-        <span class="unit">%</span>
-      </label>
-      <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化 + 对比度）</label>
+      <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化）</label>
     </div>
-    <p class="hint">裁剪规则：过宽图居中裁左右；过高图按 3:7 裁上下（上 30% / 下 70%）。JPEG 精确命中目标大小；PNG 为无损格式，结果 ≤ 目标大小×容差。</p>
+    <details class="advanced">
+      <summary>高级设置（一般无需修改）</summary>
+      <div class="settings-grid">
+        <label class="field">最大边长
+          <input type="number" id="maxEdge" min="32" max="2048" step="1" value="240">
+          <span class="unit">px · 系统会自动选择达成目标大小的最佳画质</span>
+        </label>
+        <label class="field">容差
+          <input type="number" id="tolerance" min="1" max="10" step="1" value="2">
+          <span class="unit">% · 大小允许的浮动范围</span>
+        </label>
+      </div>
+      <p class="hint">裁剪规则：过宽图居中裁左右；过高图按 3:7 裁上下（上 30% / 下 70%）。JPEG 优先保证画质，必要时自动降低分辨率以满足目标大小；PNG 为无损格式，结果 ≤ 目标大小×容差。</p>
+    </details>
   </details>
 
   <!-- 列表 -->
@@ -82,16 +84,13 @@
     <div class="actions">
       <button type="button" class="btn primary" id="btnConvert">开始转换</button>
       <button type="button" class="btn" id="btnCancel" disabled>取消</button>
+      <button type="button" class="btn" id="btnReconvert" disabled>重新转换</button>
       <button type="button" class="btn accent" id="btnExportZip" disabled>下载 ZIP</button>
       <button type="button" class="btn ghost" id="btnClearDone" disabled>移除已完成</button>
       <button type="button" class="btn ghost" id="btnClearAll" disabled>全部清除</button>
     </div>
   </section>
 </main>
-
-<footer class="footer">
-  纯本地运行 · 图片不会上传到任何服务器 · 无网络请求 · 支持 Windows / Linux / Android
-</footer>
 
 <script><!--LOGIC--></script>
 <script><!--APP--></script>

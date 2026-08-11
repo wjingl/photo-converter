@@ -201,7 +201,59 @@ const DRIVER = `
       // 轮 1：默认 50 KB（验证全流程、JPEG 精确命中、PNG 上限）
       await convertRound(50, ['photo-input.jpg'], true);
 
-      // 5. 触发 ZIP 导出（第一轮结果仍在列表；下载交由无头浏览器落盘，运行后在外部校验）
+      // 5. 预览弹层
+      {
+        const row0 = document.querySelectorAll('.file-row')[0];
+        const pvBtn = [...row0.querySelectorAll('.icon-btn')].find((b) => b.textContent === '预览');
+        pvBtn.click();
+        await tick(400);
+        report(!!document.querySelector('.modal-overlay'), '预览弹层打开');
+        const modalClose = document.querySelector('.modal-box .btn');
+        report(!!modalClose, '预览弹层有关闭按钮');
+        modalClose.click();
+        await tick(200);
+        report(!document.querySelector('.modal-overlay'), '预览弹层关闭');
+      }
+
+      // 6. 重新转换全部
+      {
+        const rcBtn = document.querySelector('#btnReconvert');
+        report(!rcBtn.disabled, '重新转换按钮可用');
+        rcBtn.click();
+        const rcDone = await waitUntil(
+          () => {
+            const sts = document.querySelectorAll('.file-row .status');
+            return sts.length > 0 && Array.from(sts).every((s) => s.textContent === '完成' || s.textContent === '失败');
+          },
+          180000, '重转完成'
+        );
+        report(rcDone, '重新转换全部完成');
+        const rcOver = [...document.querySelectorAll('.file-row')].filter((row) => {
+          const kb = parseKB(row.querySelector('.result').textContent);
+          return isFinite(kb) && kb > 51;
+        });
+        report(rcOver.length === 0, '重新转换后全部 ≤ 51.00 KB');
+        // 行级重转
+        const row1 = document.querySelectorAll('.file-row')[1];
+        const rowRcBtn = [...row1.querySelectorAll('.icon-btn')].find((b) => b.textContent === '重转');
+        rowRcBtn.click();
+        const rowDone = await waitUntil(
+          () => [...document.querySelectorAll('.file-row')][1].querySelector('.status').textContent === '完成',
+          180000, '单张重转'
+        );
+        report(!!rowDone, '单张重转完成');
+      }
+
+      // 7. 无“纯本地”等文案（排除 script 内的测试脚本自身文本）
+      {
+        const clone = document.body.cloneNode(true);
+        clone.querySelectorAll('script').forEach((s) => s.remove());
+        const txt = clone.textContent;
+        report(!txt.includes('纯本地') && !txt.includes('无网络请求') && !txt.includes('零联网'),
+          '页面不含「纯本地/无网络请求/零联网」文案');
+      }
+
+      // 8. 触发 ZIP 导出（第一轮结果仍在列表；下载交由无头浏览器落盘，运行后在外部校验）
       const zipBtn = document.querySelector('#btnExportZip');
       report(!zipBtn.disabled, '下载 ZIP 按钮可用');
       zipBtn.click();
