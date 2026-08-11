@@ -493,7 +493,7 @@
     const high = Math.min(targetBytes * (1 + tolerance), targetBytes + 5000);
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    const MIN_Q = 80; // 与搜索侧一致：mozjpeg 微调也不低于此（不压进块效应区）
+    const MIN_Q = 85; // 与搜索侧一致：mozjpeg 微调也不低于此（不压进块效应区）
     let q = Math.min(95, Math.max(MIN_Q, q0 + 6)); // 预补偿 mozjpeg 的省空间优势
     let bestFit = null; // ≤ 上限的最佳结果（硬约束：绝不返回超限值）
     for (let i = 0; i < 5; i++) {
@@ -516,7 +516,7 @@
     const MAX_ABS_ERR = 5000;
     const low = Math.max(targetBytes * (1 - tolerance), targetBytes - MAX_ABS_ERR);
     const high = Math.min(targetBytes * (1 + tolerance), targetBytes + MAX_ABS_ERR);
-    const MIN_Q = 80; // 质量下限：绝不压进块效应区（q80 以上伪影基本不可见）
+    const MIN_Q = 85; // 质量下限：绝不压进块效应区（q85 观感无瑕，q90+ 与原始几乎不可分辨）
     const base = Math.max(canvas.width, canvas.height);
     const upper = Math.min(calcUpper(base, targetKB), srcMaxEdge); // 绝不插值放大超过源
     const encJpeg = (c, q) => { onEnc(); return toBlobJpeg(c, q); };
