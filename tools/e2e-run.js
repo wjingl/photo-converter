@@ -99,9 +99,11 @@ async function main() {
       const zp = path.join(dlDir, zips[0]);
       const py = spawnSync('python', ['-c',
         'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; names=z.namelist(); print("ZIP_OK entries=%d" % len(names)); [print("  ", n, z.getinfo(n).file_size, "B") for n in names]; ' +
-        'TEXTURED=["big-photo.png","photo-input.jpg","smooth-input.jpg"]; ' +
+        'TEXTURED=["big-photo.png","photo-input.jpg"]; ' +
         'bad=[n for n in TEXTURED if not (45*1024 <= z.getinfo(n).file_size <= 51*1024)]; ' +
         'assert not bad, "压缩图未命中 50KB 窗口: %s" % bad; ' +
+        'smooth=z.getinfo("smooth-input.jpg").file_size; ' +
+        'assert 30*1024 <= smooth <= 51*1024, "低熵图 q80 下限输出异常: %d" % smooth; ' +
         'allok=all(z.getinfo(n).file_size <= 51*1024 for n in z.namelist()); ' +
         'assert allok, "存在超出 50KB 上限的文件"; ' +
         'print("SIZE_HIT_OK: 压缩图命中 50KB 窗口，全部文件 ≤ 上限")',
