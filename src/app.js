@@ -5,7 +5,7 @@
 
   const state = {
     items: [],
-    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'auto', enhance: true, tolerance: 2 },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2 },
     converting: false,
     cancel: false,
     nextId: 1,

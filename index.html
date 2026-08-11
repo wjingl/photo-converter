@@ -176,10 +176,10 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
       </label>
       <label class="field">输出格式
         <select id="formatSelect">
-          <option value="auto">保持原格式</option>
+          <option value="png" selected>PNG（无损，默认）</option>
           <option value="jpeg">JPEG（.jpg）</option>
           <option value="jpg">JPG（.jpg）</option>
-          <option value="png">PNG（.png）</option>
+          <option value="auto">保持原格式</option>
         </select>
       </label>
       <label class="field">容差
@@ -624,7 +624,7 @@ window.MozjpegEnc = Module;</script>
 
   const state = {
     items: [],
-    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'auto', enhance: true, tolerance: 2 },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2 },
     converting: false,
     cancel: false,
     nextId: 1,
