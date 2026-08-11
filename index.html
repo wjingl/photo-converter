@@ -5,15 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="description" content="批量图片转换：统一大小与比例">
+<!-- 安全：CSP 禁止一切网络连接与外部资源，仅允许内联脚本/样式与本地 WASM -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>图片批量转换 · 统一大小</title>
 <style>
+/* 亮色（默认） */
 :root {
   --bg: #f4f6f8; --card: #ffffff; --text: #1b2733; --muted: #64748b;
   --border: #dbe2ea; --primary: #2f6fed; --primary-text: #ffffff;
   --accent: #16a34a; --danger: #dc2626; --shadow: 0 1px 3px rgba(16, 24, 40, .08);
 }
+/* 暗色变量（显式暗色 或 跟随系统且未强制亮色） */
+:root[data-theme="dark"] {
+  --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
+  --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
+  --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
     --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
     --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);
@@ -190,6 +199,13 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
         <select id="qualityMode">
           <option value="high" selected>高质量（推荐）</option>
           <option value="res">高分辨率（实验）</option>
+        </select>
+      </label>
+      <label class="field">主题
+        <select id="themeSelect">
+          <option value="auto" selected>跟随系统</option>
+          <option value="light">亮色</option>
+          <option value="dark">暗色</option>
         </select>
       </label>
       <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化）</label>
@@ -946,7 +962,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
 
   const state = {
     items: [],
-    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, qualityMode: 'high' },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, qualityMode: 'high', theme: 'auto' },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -1225,8 +1241,14 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     box.className = 'modal-box';
     const img = document.createElement('img');
     img.className = 'modal-img';
-    if (item.resultBlob) img.src = URL.createObjectURL(item.resultBlob);
-    else img.src = item.thumbUrl;
+    // 预览用独立 objectURL：关闭时 revoke，防内存泄漏
+    let previewUrl = null;
+    if (item.resultBlob) {
+      previewUrl = URL.createObjectURL(item.resultBlob);
+      img.src = previewUrl;
+    } else {
+      img.src = item.thumbUrl;
+    }
     img.alt = item.name;
     const meta = document.createElement('div');
     meta.className = 'modal-meta';
@@ -1237,15 +1259,20 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     close.type = 'button';
     close.className = 'btn';
     close.textContent = '关闭';
-    close.addEventListener('click', closePreview);
+    close.addEventListener('click', () => closePreview());
     box.append(img, meta, close);
     overlay.appendChild(box);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closePreview(); });
     document.body.appendChild(overlay);
     previewModal = overlay;
+    previewModal._url = previewUrl; // 关闭时 revoke
   }
   function closePreview() {
-    if (previewModal) { previewModal.remove(); previewModal = null; }
+    if (previewModal) {
+      if (previewModal._url) { URL.revokeObjectURL(previewModal._url); previewModal._url = null; }
+      previewModal.remove();
+      previewModal = null;
+    }
   }
 
   // ---------- 设置 UI ----------
@@ -1257,6 +1284,8 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     $('#formatSelect').value = s.format;
     $('#tolerance').value = s.tolerance;
     $('#enhanceToggle').checked = s.enhance;
+    $('#qualityMode').value = s.qualityMode || 'high';
+    $('#themeSelect').value = s.theme || 'auto';
     updatePxHint();
   }
   function bindSettings() {
@@ -1267,7 +1296,16 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
     $('#tolerance').addEventListener('change', (e) => set('tolerance', clampNum(e.target.value, 1, 10, 2)));
     $('#enhanceToggle').addEventListener('change', (e) => set('enhance', e.target.checked));
+    $('#qualityMode').addEventListener('change', (e) => set('qualityMode', e.target.value));
+    $('#themeSelect').addEventListener('change', (e) => { set('theme', e.target.value); applyTheme(); });
   }
+  // 主题：auto 跟随系统（移除 data-theme），显式覆盖亮/暗
+  function applyTheme() {
+    const t = state.settings.theme || 'auto';
+    if (t === 'auto') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = t;
+  }
+
   function updatePxHint() {
     const s = state.settings;
     const kb = clampNum(s.targetKB, 30, 2048, 100);
@@ -1618,6 +1656,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     const crop = PI.computeCrop(sw, sh, [s.baseW, s.baseH]);
     // 画布 = 源裁剪尺寸：绝不无故缩小源（缩小 = 丢细节）；分辨率取舍交给编码器
     let canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, crop.w, crop.h);
+    if (typeof src.close === 'function') src.close(); // 释放解码器内存（大图关键）
     progress(30);
     // 低清上采样增强：仅在源显著小于目标尺寸时（用户勾选增强时）
     const needEnhance = s.enhance && Math.max(crop.w, crop.h) < Math.max(s.baseW, s.baseH) * 0.8;
@@ -1649,7 +1688,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       item.outPxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
       item.outDpi = physDpi;
       if (item.resultBlob.size < s.targetBytes * (1 - s.tolerance)) {
-        item.note = '原图分辨率有限（' + item.outPxW + '×' + item.outPxH + 'px），已按源分辨率输出最大质量';
+        item.note = ''; // 触顶：不显示提示
       } else if (r.edge > baseEdge) {
         item.note = 'DPI 升至 ' + item.outDpi + '（' + item.outPxW + '×' + item.outPxH + 'px）以达目标';
       }
@@ -1680,7 +1719,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       if (r.edge > baseEdge) item.note = 'DPI 升至 ' + dpi + '（' + pxW + '×' + pxH + 'px）以达目标';
       else if (r.edge < baseEdge) item.note = 'DPI 降至 ' + dpi + ' 以保画质';
       else if (r.blob.size < s.targetBytes * (1 - s.tolerance)) {
-        item.note = '原图分辨率有限（' + pxW + '×' + pxH + 'px），已按源分辨率输出最大质量';
+        item.note = ''; // 触顶：不显示提示
       }
     }
     item.resultSize = item.resultBlob.size;
@@ -1818,6 +1857,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     bindImport();
     bindSettings();
     bindActions();
+    applyTheme();
     refresh();
     requestAnimationFrame(() => setTimeout(warmup, 0));
   }

@@ -5,7 +5,7 @@
 
   const state = {
     items: [],
-    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, qualityMode: 'high' },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, qualityMode: 'high', theme: 'auto' },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -284,8 +284,14 @@
     box.className = 'modal-box';
     const img = document.createElement('img');
     img.className = 'modal-img';
-    if (item.resultBlob) img.src = URL.createObjectURL(item.resultBlob);
-    else img.src = item.thumbUrl;
+    // 预览用独立 objectURL：关闭时 revoke，防内存泄漏
+    let previewUrl = null;
+    if (item.resultBlob) {
+      previewUrl = URL.createObjectURL(item.resultBlob);
+      img.src = previewUrl;
+    } else {
+      img.src = item.thumbUrl;
+    }
     img.alt = item.name;
     const meta = document.createElement('div');
     meta.className = 'modal-meta';
@@ -296,15 +302,20 @@
     close.type = 'button';
     close.className = 'btn';
     close.textContent = '关闭';
-    close.addEventListener('click', closePreview);
+    close.addEventListener('click', () => closePreview());
     box.append(img, meta, close);
     overlay.appendChild(box);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closePreview(); });
     document.body.appendChild(overlay);
     previewModal = overlay;
+    previewModal._url = previewUrl; // 关闭时 revoke
   }
   function closePreview() {
-    if (previewModal) { previewModal.remove(); previewModal = null; }
+    if (previewModal) {
+      if (previewModal._url) { URL.revokeObjectURL(previewModal._url); previewModal._url = null; }
+      previewModal.remove();
+      previewModal = null;
+    }
   }
 
   // ---------- 设置 UI ----------
@@ -316,6 +327,8 @@
     $('#formatSelect').value = s.format;
     $('#tolerance').value = s.tolerance;
     $('#enhanceToggle').checked = s.enhance;
+    $('#qualityMode').value = s.qualityMode || 'high';
+    $('#themeSelect').value = s.theme || 'auto';
     updatePxHint();
   }
   function bindSettings() {
@@ -326,7 +339,16 @@
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
     $('#tolerance').addEventListener('change', (e) => set('tolerance', clampNum(e.target.value, 1, 10, 2)));
     $('#enhanceToggle').addEventListener('change', (e) => set('enhance', e.target.checked));
+    $('#qualityMode').addEventListener('change', (e) => set('qualityMode', e.target.value));
+    $('#themeSelect').addEventListener('change', (e) => { set('theme', e.target.value); applyTheme(); });
   }
+  // 主题：auto 跟随系统（移除 data-theme），显式覆盖亮/暗
+  function applyTheme() {
+    const t = state.settings.theme || 'auto';
+    if (t === 'auto') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = t;
+  }
+
   function updatePxHint() {
     const s = state.settings;
     const kb = clampNum(s.targetKB, 30, 2048, 100);
@@ -677,6 +699,7 @@
     const crop = PI.computeCrop(sw, sh, [s.baseW, s.baseH]);
     // 画布 = 源裁剪尺寸：绝不无故缩小源（缩小 = 丢细节）；分辨率取舍交给编码器
     let canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, crop.w, crop.h);
+    if (typeof src.close === 'function') src.close(); // 释放解码器内存（大图关键）
     progress(30);
     // 低清上采样增强：仅在源显著小于目标尺寸时（用户勾选增强时）
     const needEnhance = s.enhance && Math.max(crop.w, crop.h) < Math.max(s.baseW, s.baseH) * 0.8;
@@ -708,7 +731,7 @@
       item.outPxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
       item.outDpi = physDpi;
       if (item.resultBlob.size < s.targetBytes * (1 - s.tolerance)) {
-        item.note = '原图分辨率有限（' + item.outPxW + '×' + item.outPxH + 'px），已按源分辨率输出最大质量';
+        item.note = ''; // 触顶：不显示提示
       } else if (r.edge > baseEdge) {
         item.note = 'DPI 升至 ' + item.outDpi + '（' + item.outPxW + '×' + item.outPxH + 'px）以达目标';
       }
@@ -739,7 +762,7 @@
       if (r.edge > baseEdge) item.note = 'DPI 升至 ' + dpi + '（' + pxW + '×' + pxH + 'px）以达目标';
       else if (r.edge < baseEdge) item.note = 'DPI 降至 ' + dpi + ' 以保画质';
       else if (r.blob.size < s.targetBytes * (1 - s.tolerance)) {
-        item.note = '原图分辨率有限（' + pxW + '×' + pxH + 'px），已按源分辨率输出最大质量';
+        item.note = ''; // 触顶：不显示提示
       }
     }
     item.resultSize = item.resultBlob.size;
@@ -877,6 +900,7 @@
     bindImport();
     bindSettings();
     bindActions();
+    applyTheme();
     refresh();
     requestAnimationFrame(() => setTimeout(warmup, 0));
   }

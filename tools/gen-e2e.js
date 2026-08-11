@@ -63,6 +63,24 @@ const DRIVER = `
         '设置默认物理尺寸 1.2 × 1.8 cm');
       report(!document.querySelector('#dpi') && !document.querySelector('#maxEdge'),
         '无像素精度/最大边长配置（DPI 由目标大小实时演算）');
+      // 主题切换：亮/暗/跟随系统
+      {
+        const sel = document.querySelector('#themeSelect');
+        sel.value = 'dark';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await tick(50);
+        const dark = document.documentElement.dataset.theme === 'dark';
+        sel.value = 'light';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await tick(50);
+        const light = document.documentElement.dataset.theme === 'light';
+        sel.value = 'auto';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await tick(50);
+        const auto = !document.documentElement.dataset.theme;
+        report(dark && light && auto, '主题切换：亮/暗/跟随系统（' + dark + '/' + light + '/' + auto + '）');
+      }
+
       // 探针：change 事件派发链路是否正常
       let probeFired = 0;
       const probeInput = document.querySelector('#fileInput');

@@ -1,10 +1,17 @@
+/* 亮色（默认） */
 :root {
   --bg: #f4f6f8; --card: #ffffff; --text: #1b2733; --muted: #64748b;
   --border: #dbe2ea; --primary: #2f6fed; --primary-text: #ffffff;
   --accent: #16a34a; --danger: #dc2626; --shadow: 0 1px 3px rgba(16, 24, 40, .08);
 }
+/* 暗色变量（显式暗色 或 跟随系统且未强制亮色） */
+:root[data-theme="dark"] {
+  --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
+  --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
+  --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f1419; --card: #1a222b; --text: #e7edf3; --muted: #8fa3b8;
     --border: #2c3a47; --primary: #4c8dff; --primary-text: #ffffff;
     --accent: #22c55e; --danger: #f87171; --shadow: 0 1px 3px rgba(0, 0, 0, .5);

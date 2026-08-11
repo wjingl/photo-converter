@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="description" content="批量图片转换：统一大小与比例">
+<!-- 安全：CSP 禁止一切网络连接与外部资源，仅允许内联脚本/样式与本地 WASM -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>图片批量转换 · 统一大小</title>
 <!--STYLE-->
 </head>
@@ -60,6 +62,13 @@
         <select id="qualityMode">
           <option value="high" selected>高质量（推荐）</option>
           <option value="res">高分辨率（实验）</option>
+        </select>
+      </label>
+      <label class="field">主题
+        <select id="themeSelect">
+          <option value="auto" selected>跟随系统</option>
+          <option value="light">亮色</option>
+          <option value="dark">暗色</option>
         </select>
       </label>
       <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化）</label>
