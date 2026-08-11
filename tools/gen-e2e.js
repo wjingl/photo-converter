@@ -320,7 +320,33 @@ const DRIVER = `
         } catch (e) { report(false, 'mozjpeg WASM 验证失败: ' + e.message); }
       }
 
-      // 8. 诊断：低熵图升分辨率时 q95 大小的真实增长曲线
+      // 8. oxipng（PNG 优化编码器）显式验证：WASM 实例化 + 编码
+      {
+        report(true, 'oxipng 诊断：typeof OxipngInitSync=' + typeof window.OxipngInitSync +
+          ' typeof encode=' + typeof window.encode +
+          ' glueLen=' + document.getElementById('oxipngWasm').textContent.trim().length);
+        try {
+          const b64 = document.getElementById('oxipngWasm').textContent.trim();
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const module = await WebAssembly.compile(bytes);
+          await window.OxipngInitSync(module);
+          const c = document.createElement('canvas');
+          c.width = 128; c.height = 128;
+          const ctx = c.getContext('2d');
+          const grad = ctx.createLinearGradient(0, 0, 128, 128);
+          grad.addColorStop(0, '#f0f');
+          grad.addColorStop(1, '#0ff');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, 128, 128);
+          const data = ctx.getImageData(0, 0, 128, 128).data;
+          const buf = window.encode(data, 128, 128, 8);
+          report(!!buf && buf.byteLength > 50, 'oxipng WASM 实例化并成功编码（' + (buf ? buf.byteLength : 0) + ' B）');
+        } catch (e) { report(false, 'oxipng WASM 验证失败: ' + e.message); }
+      }
+
+      // 9. 诊断：低熵图升分辨率时 q95 大小的真实增长曲线
       {
         try {
           const c = document.createElement('canvas');

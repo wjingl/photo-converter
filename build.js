@@ -23,6 +23,20 @@ glue = glue.replace(/new XMLHttpRequest/g, 'null');
 html = html.replace('<!--MOZJPEG_GLUE-->', glue);
 // mozjpeg 编码器 WASM（248KB）以 base64 内嵌，保持单文件零联网
 html = html.replace('<!--MOZJPEG_WASM-->', fs.readFileSync(path.join(root, 'vendor', 'mozjpeg_enc.wasm')).toString('base64'));
+// oxipng（Squoosh 同款 PNG 优化编码器）glue：wasm-bindgen ESM → 全局
+let oxi = read('vendor/oxipng_enc.js');
+oxi = oxi.replace('import.meta.url === undefined', 'false');
+oxi = oxi.replace("import.meta.url = 'https://localhost'", 'void 0');
+oxi = oxi.replace('new URL(\'squoosh_png_bg.wasm\', import.meta.url)', '\'oxipng_enc.wasm\'');
+// wasm 备用加载路径（fetch）：initSync(module) 注入时不执行；静态清零确保离线
+oxi = oxi.replace('input = fetch(input);', 'input = null;');
+oxi = oxi.replace(/import\.meta\.url/g, '""');
+oxi = oxi.replace(/export function /g, 'function ');
+oxi = oxi.replace(/export class /g, 'class ');
+oxi = oxi.replace('export { initSync }', 'window.OxipngInitSync = initSync;');
+oxi = oxi.replace('export default __wbg_init;', '');
+html = html.replace('<!--OXIPNG_GLUE-->', oxi);
+html = html.replace('<!--OXIPNG_WASM-->', fs.readFileSync(path.join(root, 'vendor', 'oxipng_enc.wasm')).toString('base64'));
 html = html.replace('<!--LOGIC-->', read('src/logic.js'));
 html = html.replace('<!--APP-->', read('src/app.js'));
 

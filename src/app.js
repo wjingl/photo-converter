@@ -5,7 +5,7 @@
 
   const state = {
     items: [],
-    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2 },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, qualityMode: 'high' },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -54,6 +54,7 @@
       format: s.format,
       enhance: !!s.enhance,
       tolerance: Math.max(0.5, Math.min(15, s.tolerance)) / 100,
+      minQ: s.qualityMode === 'res' ? 45 : 85, // 高质量 q85 / 高分辨率实验 q45
     };
   }
 
@@ -453,6 +454,59 @@
     return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', q / 100));
   }
 
+  // ---------- oxipng（Squoosh 同款 PNG 优化编码器，内嵌离线）----------
+  // 行滤波（Paeth/Sub/Up/Average）选择 + 高级压缩 → 同等内容下文件更小 → 目标大小内可承载更高分辨率
+  let oxipngModule = null;
+  function initOxipng() {
+    if (oxipngModule) return oxipngModule;
+    oxipngModule = (async () => {
+      try {
+        const b64 = document.getElementById('oxipngWasm').textContent.trim();
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const module = await WebAssembly.compile(bytes);
+        await window.OxipngInitSync(module);
+        return { encode: window.encode };
+      } catch (e) {
+        return null; // 失败 → 回退自写 PNG 编码器
+      }
+    })();
+    return oxipngModule;
+  }
+  async function encodePngOxipng(data, w, h) {
+    const m = await initOxipng();
+    if (!m) return null;
+    const buf = m.encode(data, w, h, 8);
+    return new Uint8Array(buf);
+  }
+  // oxipng 输出不含 pHYs：在 IHDR 后插入（标准 PNG chunk，带 CRC）
+  function insertPngPhys(png, dpi) {
+    if (png.length < 33 || png[0] !== 0x89 || png[1] !== 0x50) return png;
+    const ppm = Math.round(dpi * 100 / 2.54);
+    const data = new Uint8Array(9);
+    const dv = new DataView(data.buffer);
+    dv.setUint32(0, ppm);
+    dv.setUint32(4, ppm);
+    data[8] = 1; // 单位：米
+    const type = [0x70, 0x48, 0x59, 0x73]; // 'pHYs'
+    const crcBuf = new Uint8Array(4 + 9);
+    crcBuf.set(type, 0);
+    crcBuf.set(data, 4);
+    const crc = PI.crc32(crcBuf);
+    const chunk = new Uint8Array(12 + 9);
+    new DataView(chunk.buffer).setUint32(0, 9);
+    chunk.set(type, 4);
+    chunk.set(data, 8);
+    new DataView(chunk.buffer).setUint32(8 + 9, crc);
+    const insertAt = 8 + 25; // 签名 + IHDR chunk
+    const out = new Uint8Array(png.length + chunk.length);
+    out.set(png.subarray(0, insertAt), 0);
+    out.set(chunk, insertAt);
+    out.set(png.subarray(insertAt), insertAt + chunk.length);
+    return out;
+  }
+
   // ---------- mozjpeg 高质量编码（开源 WASM，内嵌离线；质量显著优于浏览器原生/libjpeg）----------
   let mozjpegPromise = null;
   function initMozjpeg() {
@@ -486,14 +540,14 @@
   }
   // 最终高质量编码：用 mozjpeg 在搜索到的 (分辨率, 质量) 处重编码并校验命中目标窗口
   // （mozjpeg 同参数下比浏览器原生省 10-20% 大小 → 同大小下质量高一个档次）
-  async function encodeJpegMozBest(canvas, q0, targetBytes, tolerance) {
+  async function encodeJpegMozBest(canvas, q0, targetBytes, tolerance, minQ) {
     const mod = await initMozjpeg();
     if (!mod) return null;
     const low = Math.max(targetBytes * (1 - tolerance), targetBytes - 5000);
     const high = Math.min(targetBytes * (1 + tolerance), targetBytes + 5000);
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    const MIN_Q = 85; // 与搜索侧一致：mozjpeg 微调也不低于此（不压进块效应区）
+    const MIN_Q = minQ; // 与搜索侧一致：mozjpeg 微调也不低于此
     let q = Math.min(95, Math.max(MIN_Q, q0 + 6)); // 预补偿 mozjpeg 的省空间优势
     let bestFit = null; // ≤ 上限的最佳结果（硬约束：绝不返回超限值）
     for (let i = 0; i < 5; i++) {
@@ -512,11 +566,11 @@
   //   2) 源分辨率下二分质量 [72,95] → 命中窗口即输出（小图只需降质量，保持源分辨率）
   //   3) q72 仍超限 → 二分分辨率找「q72 ≤ 上限的最大分辨率」→ 该分辨率二分质量命中
   //   有效容差 = min(百分比, 5KB/目标)：最终大小与目标误差 ≤ 5KB（硬要求）
-  async function jpegToTarget(canvas, targetBytes, tolerance, targetKB, srcMaxEdge, onEnc) {
+  async function jpegToTarget(canvas, targetBytes, tolerance, targetKB, srcMaxEdge, minQ, onEnc) {
     const MAX_ABS_ERR = 5000;
     const low = Math.max(targetBytes * (1 - tolerance), targetBytes - MAX_ABS_ERR);
     const high = Math.min(targetBytes * (1 + tolerance), targetBytes + MAX_ABS_ERR);
-    const MIN_Q = 85; // 质量下限：绝不压进块效应区（q85 观感无瑕，q90+ 与原始几乎不可分辨）
+    const MIN_Q = minQ; // 质量下限（high: q85 观感无瑕 / res: q45 高分辨率实验）
     const base = Math.max(canvas.width, canvas.height);
     const upper = Math.min(calcUpper(base, targetKB), srcMaxEdge); // 绝不插值放大超过源
     const encJpeg = (c, q) => { onEnc(); return toBlobJpeg(c, q); };
@@ -639,17 +693,27 @@
     const srcMaxEdge = Math.max(crop.w, crop.h); // 源信息上限：绝不插值放大超过它
     if (ext === 'png') {
       const r = await pngToTarget(canvas, s.targetBytes, s.tolerance, physMaxCm, s.targetKB, srcMaxEdge, onEnc);
-      item.resultBlob = r.blob;
+      // 最终编码：oxipng（行滤波 + 高级压缩，公认做法）重编码 → 同等像素更小文件
+      const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
+      const oxiData = finalCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+      const oxiBytes = await encodePngOxipng(oxiData.data, finalCanvas.width, finalCanvas.height);
+      const high = Math.min(s.targetBytes * (1 + s.tolerance), s.targetBytes + 5000);
+      const physDpi = dpiFromPx(r.edge, physMaxCm);
+      if (oxiBytes && oxiBytes.length <= high && oxiBytes.length <= r.blob.size) {
+        item.resultBlob = new Blob([insertPngPhys(oxiBytes, physDpi)], { type: 'image/png' });
+      } else {
+        item.resultBlob = r.blob; // oxipng 不可用/超限/压缩更差 → 回退自写编码（已含 pHYs）
+      }
       item.outPxW = cw >= ch ? r.edge : Math.round(r.edge * cw / ch);
       item.outPxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
-      item.outDpi = dpiFromPx(r.edge, physMaxCm);
+      item.outDpi = physDpi;
       if (item.resultBlob.size < s.targetBytes * (1 - s.tolerance)) {
         item.note = '原图分辨率有限（' + item.outPxW + '×' + item.outPxH + 'px），已按源分辨率输出最大质量';
       } else if (r.edge > baseEdge) {
         item.note = 'DPI 升至 ' + item.outDpi + '（' + item.outPxW + '×' + item.outPxH + 'px）以达目标';
       }
     } else {
-      const r = await jpegToTarget(canvas, s.targetBytes, s.tolerance, s.targetKB, srcMaxEdge, onEnc);
+      const r = await jpegToTarget(canvas, s.targetBytes, s.tolerance, s.targetKB, srcMaxEdge, s.minQ, onEnc);
       // 演算的像素精度：物理尺寸不变，只调整像素
       const dpi = dpiFromPx(r.edge, physMaxCm);
       const pxW = cw >= ch ? r.edge : Math.round(r.edge * cw / ch);
@@ -664,7 +728,7 @@
         // 源分辨率路径（无缩放）：重压缩补偿锐化——恢复感知锐度，抵消二次压缩软化
         lightSharpen(finalCanvas, 0.3);
       }
-      let outBytes = await encodeJpegMozBest(finalCanvas, r.q, s.targetBytes, s.tolerance);
+      let outBytes = await encodeJpegMozBest(finalCanvas, r.q, s.targetBytes, s.tolerance, s.minQ);
       if (!outBytes) outBytes = new Uint8Array(await r.blob.arrayBuffer()); // 回退原生
       // 写入演算出的 DPI 元数据（不改变文件大小）
       const withDpi = PI.setJpegDensity(outBytes, dpi);
