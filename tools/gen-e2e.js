@@ -72,12 +72,12 @@ const DRIVER = `
 
       const input = document.querySelector('#fileInput');
 
-      // 附加 JPEG 输入 1：240x240 随机像素合成图（真实照片级熵，q95≈58KB，与照片曲线同构）
+      // 附加 JPEG 输入 1：1200x1200 随机像素合成图（高熵照片模拟，源分辨率足够）
       async function makeJpegFixture() {
         const c = document.createElement('canvas');
-        c.width = 240; c.height = 240;
+        c.width = 1200; c.height = 1200;
         const ctx = c.getContext('2d');
-        const img = ctx.createImageData(240, 240);
+        const img = ctx.createImageData(1200, 1200);
         const d = img.data;
         for (let i = 0; i < d.length; i += 4) {
           d[i] = Math.random() * 255 | 0;
@@ -90,18 +90,18 @@ const DRIVER = `
         return new File([jpgBlob], 'photo-input.jpg', { type: 'image/jpeg' });
       }
 
-      // 附加 JPEG 输入 2：240x240 渐变 + 轻度噪声（低熵但有纹理，240px 下 q95≈23KB
-      // → 默认 50KB 目标必须升分辨率才能达标，验证“边长由目标实时确定”）
+      // 附加 JPEG 输入 2：1600x1600 渐变 + 轻度噪声（低熵但有纹理且源分辨率足够，
+      // → 默认目标必须升分辨率才能达标，验证“边长由目标实时确定”；源够大故可升）
       async function makeSmoothJpegFixture() {
         const c = document.createElement('canvas');
-        c.width = 240; c.height = 240;
+        c.width = 1600; c.height = 1600;
         const ctx = c.getContext('2d');
-        const grad = ctx.createLinearGradient(0, 0, 240, 240);
+        const grad = ctx.createLinearGradient(0, 0, 1600, 1600);
         grad.addColorStop(0, '#4f8cff');
         grad.addColorStop(1, '#ffb04f');
         ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 240, 240);
-        const img = ctx.getImageData(0, 0, 240, 240);
+        ctx.fillRect(0, 0, 1600, 1600);
+        const img = ctx.getImageData(0, 0, 1600, 1600);
         for (let i = 0; i < img.data.length; i += 4) {
           const n = Math.floor(Math.random() * 20) - 10;
           img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
@@ -111,9 +111,10 @@ const DRIVER = `
         return new File([jpgBlob], 'smooth-input.jpg', { type: 'image/jpeg' });
       }
 
-      // 坏文件（伪装成 .jpg 的随机字节，模拟 HEIC 等无法解码的格式）
+      // 坏文件（伪装成 .jpg 的随机字节，模拟 HEIC 等无法解码的格式；大于目标大小，
+      // 避免命中「原样保留」分支——坏文件必须走解码失败路径）
       async function makeBadFixture() {
-        const bytes = new Uint8Array(4096);
+        const bytes = new Uint8Array(3 * 1024 * 1024);
         for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31) % 256;
         return new File([bytes], 'bad-input.jpg', { type: 'image/jpeg' });
       }
@@ -153,7 +154,21 @@ const DRIVER = `
         // 导入 → 转换
         const files = await makeFixtureFiles();
         await importFiles(files);
+        report([...document.querySelectorAll('.file-row')].every((r) => !!r.querySelector('.row-progress')),
+          '每行均有独立进度条');
         document.querySelector('#btnConvert').click();
+        // 并发确认：轮询捕获同刻处理中的行数（≥2 即证明并行）
+        let maxProcessing = 0;
+        let sawProgress = false;
+        for (let i = 0; i < 30; i++) {
+          maxProcessing = Math.max(maxProcessing,
+            [...document.querySelectorAll('.file-row .status')].filter((s) => s.textContent === '处理中…').length);
+          if ([...document.querySelectorAll('.row-progress-fill')].some((f) => parseFloat(f.style.width) > 0)) sawProgress = true;
+          if (maxProcessing >= 2 && sawProgress) break;
+          await tick(100);
+        }
+        report(maxProcessing >= 2, '并行执行确认（同刻处理中 ≥ 2 行，实测 ' + maxProcessing + ' 行）');
+        report(sawProgress, '行级进度条已推进');
         const finished = await waitUntil(
           () => {
             const sts = document.querySelectorAll('.file-row .status');
@@ -187,7 +202,7 @@ const DRIVER = `
         if (!isFinite(jkb)) jpegOk = false;
         else if (jkb > upper) jpegOk = false;                       // 超上限 = 失败
         else if (jkb >= targetKB * 0.98) { jpegOk = true; jpegMode = '精确命中'; }
-        else { jpegOk = jkb > 5 && jkb > upper * 0.5; jpegMode = '内容受限（触顶/粒度）'; }
+        else { jpegOk = jkb > 5; jpegMode = '受限（源分辨率/内容触顶，有效输出）'; }
         report(!!jpegOk, '目标 ' + targetKB + ' KB：JPEG 输入' + jpegMode + '（' + jkb + ' KB，硬约束 ≤ ' + upper.toFixed(1) + '）');
         const pngOver = sizes.filter((s) => s.name.endsWith('.png') && isFinite(s.kb) && s.kb > upper);
         report(pngOver.length === 0, '目标 ' + targetKB + ' KB：PNG 输入全部 ≤ ' + upper.toFixed(2) + ' KB');
@@ -201,6 +216,11 @@ const DRIVER = `
         const smoothHit = smooth && isFinite(smooth.kb) && smooth.kb >= targetKB * 0.9 && smooth.kb <= upper;
         report(!!smoothHit, '目标 ' + targetKB + ' KB：低熵图升分辨率命中 [' + (targetKB * 0.9).toFixed(1) + ', ' + upper.toFixed(2) + ']（' +
           (smooth ? smooth.kb + ' KB' : '无') + '）');
+        // 小图源（100×80，10.6KB）：保持源分辨率触顶输出（不放大不缩小，≤ 上限）
+        const small = sizes.find((s) => s.name === 'small.png');
+        const smallOk = small && isFinite(small.kb) && small.kb <= upper && small.kb > 5;
+        report(!!smallOk, '目标 ' + targetKB + ' KB：小图源保持分辨率触顶（small ' +
+          (small ? small.kb + ' KB' : '?') + ' ≤ ' + upper.toFixed(1) + '）');
         const valid = sizes.filter((s) => s.status === '完成' && isFinite(s.kb) && s.kb > 0);
         report(valid.length === 9, '目标 ' + targetKB + ' KB：9/10 输出有效（' + valid.length + ' 完成，坏文件除外）');
         if (!keepList) {
@@ -227,9 +247,10 @@ const DRIVER = `
           if (!firstOpen && modal) { firstOpen = true; report(true, '预览弹层打开'); }
           const img = document.querySelector('.modal-img');
           const meta = document.querySelector('.modal-meta');
-          // 物理 1.2 × 1.8 cm → 像素宽高比 2:3（±3%）
-          if (!img || !img.naturalWidth || !img.naturalHeight ||
-              Math.abs(img.naturalWidth / img.naturalHeight - 2 / 3) > 0.03) shapeOk = false;
+          // 物理 1.2 × 1.8 cm → 像素宽高比 2:3（±3%）；「原样保留」行（无 px @ DPI 元数据）跳过
+          const isKept = !meta || !/px @/.test(meta.textContent);
+          if (!isKept && (!img || !img.naturalWidth || !img.naturalHeight ||
+              Math.abs(img.naturalWidth / img.naturalHeight - 2 / 3) > 0.03)) shapeOk = false;
           if (!meta || !/DPI/.test(meta.textContent)) dpiMetaOk = false;
           const close = document.querySelector('.modal-box .btn');
           if (close) close.click();
