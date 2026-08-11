@@ -54,7 +54,7 @@
       format: s.format,
       enhance: !!s.enhance,
       tolerance: Math.max(0.5, Math.min(15, s.tolerance)) / 100,
-      minQ: s.qualityMode === 'res' ? 45 : 85, // 高质量 q85 / 高分辨率实验 q45
+      minQ: s.qualityMode === 'res' ? 45 : 90, // 高质量 q90（与原始几乎不可分辨）/ 高分辨率实验 q45
     };
   }
 
