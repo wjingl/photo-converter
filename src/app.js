@@ -337,15 +337,23 @@
   }
 
   // ---------- 解码 ----------
-  async function loadBitmap(file) {
+  // 带超时保护：HEIC 等无法解码的格式可能挂起（promise 永不 resolve），
+  // 超时即判失败并继续处理后续文件，绝不让单张坏文件卡死整个批处理。
+  async function loadBitmap(file, timeoutMs = 15000) {
+    const withTimeout = (p, label) => Promise.race([
+      p,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('解码超时(' + label + ')')), timeoutMs)),
+    ]);
     try {
-      return await createImageBitmap(file, { imageOrientation: 'from-image' });
+      return await withTimeout(createImageBitmap(file, { imageOrientation: 'from-image' }), 'createImageBitmap');
     } catch (e) {
       const url = URL.createObjectURL(file);
       try {
         const img = new Image();
-        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+        await withTimeout(new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; }), 'Image');
         return img;
+      } catch (e2) {
+        throw new Error('无法解码此格式（HEIC 等请先转换为 JPEG/PNG）');
       } finally { URL.revokeObjectURL(url); }
     }
   }

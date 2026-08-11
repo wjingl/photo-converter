@@ -111,6 +111,13 @@ const DRIVER = `
         return new File([jpgBlob], 'smooth-input.jpg', { type: 'image/jpeg' });
       }
 
+      // 坏文件（伪装成 .jpg 的随机字节，模拟 HEIC 等无法解码的格式）
+      async function makeBadFixture() {
+        const bytes = new Uint8Array(4096);
+        for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31) % 256;
+        return new File([bytes], 'bad-input.jpg', { type: 'image/jpeg' });
+      }
+
       async function importFiles(files) {
         const dt = new DataTransfer();
         for (const f of files) dt.items.add(f);
@@ -134,6 +141,7 @@ const DRIVER = `
         }
         files.push(await makeJpegFixture());
         files.push(await makeSmoothJpegFixture());
+        files.push(await makeBadFixture());
         return files;
       }
 
@@ -153,7 +161,7 @@ const DRIVER = `
           },
           180000, '转换完成'
         );
-        report(finished, '目标 ' + targetKB + ' KB：转换全部完成（9 张：7 PNG + 2 JPEG）');
+        report(finished, '目标 ' + targetKB + ' KB：转换全部完成（10 张：7 PNG + 2 JPEG + 1 坏文件）');
         // 校验
         const sizes = [];
         for (const row of document.querySelectorAll('.file-row')) {
@@ -163,11 +171,14 @@ const DRIVER = `
           const kb = parseKB(resultTxt);
           sizes.push({ name, status, kb, resultTxt });
         }
+        // 预期：仅 bad-input 失败（解码失败），其余全部完成——单张坏文件不得卡死批处理
         const anyFail = sizes.filter((s) => s.status === '失败');
-        report(anyFail.length === 0, '目标 ' + targetKB + ' KB：无失败项（' +
-          JSON.stringify(anyFail.map((s) => s.name + ': ' + s.resultTxt)) + '）');
+        const unexpectedFail = anyFail.filter((s) => s.name !== 'bad-input.jpg');
+        report(unexpectedFail.length === 0 && anyFail.length === 1,
+          '目标 ' + targetKB + ' KB：仅坏文件失败、其余全部成功（失败: ' +
+          JSON.stringify(anyFail.map((s) => s.name)) + '）');
         const upper = targetKB * 1.02;
-        const over = sizes.filter((s) => isFinite(s.kb) && s.kb > upper);
+        const over = sizes.filter((s) => s.name !== 'bad-input.jpg' && isFinite(s.kb) && s.kb > upper);
         report(over.length === 0, '目标 ' + targetKB + ' KB：全部 ≤ ' + upper.toFixed(2) + ' KB（超出: ' + JSON.stringify(over) + '）');
         // JPEG 输入（硬约束：≤ 上限；理想：精确命中；简单内容：触顶合法）
         const jpegRow = sizes.find((s) => s.name === 'photo-input.jpg');
@@ -191,7 +202,7 @@ const DRIVER = `
         report(!!smoothHit, '目标 ' + targetKB + ' KB：低熵图升分辨率命中 [' + (targetKB * 0.9).toFixed(1) + ', ' + upper.toFixed(2) + ']（' +
           (smooth ? smooth.kb + ' KB' : '无') + '）');
         const valid = sizes.filter((s) => s.status === '完成' && isFinite(s.kb) && s.kb > 0);
-        report(valid.length === 9, '目标 ' + targetKB + ' KB：全部输出有效（' + valid.length + '/9）');
+        report(valid.length === 9, '目标 ' + targetKB + ' KB：9/10 输出有效（' + valid.length + ' 完成，坏文件除外）');
         if (!keepList) {
           document.querySelector('#btnClearAll').click();
           await tick(200);
@@ -208,6 +219,7 @@ const DRIVER = `
         let shapeOk = true;
         let dpiMetaOk = true;
         for (const row of rows) {
+          if (row.querySelector('.status').textContent === '失败') continue; // 失败行无结果可预览
           const pvBtn = [...row.querySelectorAll('.icon-btn')].find((b) => b.textContent === '预览');
           pvBtn.click();
           await tick(400);
@@ -218,7 +230,7 @@ const DRIVER = `
           if (!img || img.naturalWidth !== img.naturalHeight) shapeOk = false; // 物理 1:1 → 像素正方形
           if (!meta || !/DPI/.test(meta.textContent)) dpiMetaOk = false;
           const close = document.querySelector('.modal-box .btn');
-          close.click();
+          if (close) close.click();
           await tick(150);
         }
         report(firstOpen, '预览弹层可用');
