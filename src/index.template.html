@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="本地批量图片转换：统一大小与比例，无网络">
+<title>图片批量转换 · 统一大小</title>
+<!--STYLE-->
+</head>
+<body>
+<header class="topbar">
+  <h1>图片批量转换</h1>
+  <span class="local-badge">纯本地 · 零联网</span>
+</header>
+
+<main>
+  <!-- 导入区 -->
+  <section id="dropZone" tabindex="0" role="button" aria-label="拖入图片或文件夹">
+    <div class="drop-icon">⬆</div>
+    <p class="drop-title">拖入图片或文件夹到此处</p>
+    <p class="drop-sub">或点击下方按钮选择 · 支持整文件夹（含子文件夹）</p>
+    <div class="drop-actions">
+      <button type="button" class="btn primary" id="btnPickFiles">选择图片</button>
+      <button type="button" class="btn" id="btnPickFolder">选择文件夹</button>
+    </div>
+    <input type="file" id="fileInput" multiple accept="image/*" hidden>
+    <input type="file" id="folderInput" webkitdirectory multiple hidden>
+  </section>
+
+  <!-- 设置 -->
+  <details id="settingsPanel" open>
+    <summary>输出设置</summary>
+    <div class="settings-grid">
+      <label class="field">目标大小
+        <input type="number" id="targetKB" min="5" max="5120" step="1" value="50">
+        <span class="unit">KB</span>
+      </label>
+      <label class="field">输出比例
+        <select id="aspectSelect">
+          <option value="1:1">1:1 正方形</option>
+          <option value="4:3">4:3</option>
+          <option value="3:2">3:2</option>
+          <option value="16:9">16:9</option>
+          <option value="custom">自定义</option>
+        </select>
+      </label>
+      <label class="field custom-aspect" id="customAspectWrap" hidden>
+        <input type="text" id="customAspect" placeholder="如 5:4" value="5:4">
+      </label>
+      <label class="field">最长边
+        <input type="number" id="maxEdge" min="32" max="2048" step="1" value="240">
+        <span class="unit">px</span>
+      </label>
+      <label class="field">输出格式
+        <select id="formatSelect">
+          <option value="auto">保持原格式</option>
+          <option value="jpeg">JPEG（.jpg）</option>
+          <option value="jpg">JPG（.jpg）</option>
+          <option value="png">PNG（.png）</option>
+        </select>
+      </label>
+      <label class="field">容差
+        <input type="number" id="tolerance" min="1" max="10" step="1" value="2">
+        <span class="unit">%</span>
+      </label>
+      <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化 + 对比度）</label>
+    </div>
+    <p class="hint">裁剪规则：过宽图居中裁左右；过高图按 3:7 裁上下（上 30% / 下 70%）。JPEG 精确命中目标大小；PNG 为无损格式，结果 ≤ 目标大小×容差。</p>
+  </details>
+
+  <!-- 列表 -->
+  <section id="listSection">
+    <div id="listEmpty" class="empty">尚未导入图片 — 拖入、选择图片或选择文件夹</div>
+    <ul id="fileList" class="file-list"></ul>
+  </section>
+
+  <!-- 底部操作栏 -->
+  <section class="actionbar" id="actionbar">
+    <div class="stats" id="statsBar">0 张图片</div>
+    <div class="progress-wrap"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="actions">
+      <button type="button" class="btn primary" id="btnConvert">开始转换</button>
+      <button type="button" class="btn" id="btnCancel" disabled>取消</button>
+      <button type="button" class="btn accent" id="btnExportZip" disabled>下载 ZIP</button>
+      <button type="button" class="btn ghost" id="btnClearDone" disabled>移除已完成</button>
+      <button type="button" class="btn ghost" id="btnClearAll" disabled>全部清除</button>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  纯本地运行 · 图片不会上传到任何服务器 · 无网络请求 · 支持 Windows / Linux / Android
+</footer>
+
+<script><!--LOGIC--></script>
+<script><!--APP--></script>
+</body>
+</html>
