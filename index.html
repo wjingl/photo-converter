@@ -1057,14 +1057,16 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
       if (q95.size < low) return { type: 'under', blob: q95, q: 95 }; // 内容不足 → 升像素
       if (q95.size <= high) return { type: 'hit', blob: q95, q: 95 }; // q95 直接命中
       // 估算起跳：q 每档大小变化约 ×2^(1/15)（对数模型）
+      // 质量下限 72：高熵大图宁可降分辨率也不压出明显块效应（伪影破坏力 > 降采样模糊）
+      const MIN_Q = 72;
       let q0 = Math.round(95 + 15 * Math.log2(high / q95.size));
-      q0 = Math.max(60, Math.min(95, q0));
-      if (q0 === 60) {
-        const b60 = await toBlobJpeg(c, 60);
-        track(b60, 60);
-        if (b60.size > high) return { type: 'over', blob: b60, q: 60 }; // 画质下限仍超 → 降像素
+      q0 = Math.max(MIN_Q, Math.min(95, q0));
+      if (q0 === MIN_Q) {
+        const bLow = await toBlobJpeg(c, MIN_Q);
+        track(bLow, MIN_Q);
+        if (bLow.size > high) return { type: 'over', blob: bLow, q: MIN_Q }; // 画质下限仍超 → 降像素
       }
-      let lo = Math.max(60, q0 - 6), hi = Math.min(95, q0 + 6);
+      let lo = Math.max(MIN_Q, q0 - 6), hi = Math.min(95, q0 + 6);
       let found = null;
       for (let i = 0; i < 8; i++) {
         const q = Math.round((lo + hi) / 2);
@@ -1076,7 +1078,7 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
         if (hi < lo) break;
       }
       if (found) return { type: 'hit', blob: found.blob, q: found.q }; // ≤ high（可能略低于下限）
-      return { type: 'over', blob: null, q: 60 };
+      return { type: 'over', blob: null, q: MIN_Q };
     };
     for (;;) {
       const r = await search(cur);
