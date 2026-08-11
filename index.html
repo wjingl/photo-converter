@@ -961,27 +961,35 @@ details.advanced .settings-grid { padding: 8px 0 10px; }
     return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', q / 100));
   }
 
-  // JPEG（质量优先）：每个分辨率档位下：
-  //   1) q95 ≤ 上限 → 触顶，直接输出（保持最大分辨率与最高画质）
-  //   2) 二分 [60,95] 找 ≤ 上限的最大质量 → 输出
-  //   3) q60 仍超限 → 降分辨率重试（宁可小一点，也不要低画质）
-  // 硬约束：结果 ≤ 目标×(1+容差)
-  async function jpegToTarget(canvas, targetBytes, tolerance, maxEdge) {
+  // JPEG（目标驱动）：分辨率与质量均由目标大小实时确定，逐图独立计算。
+  //   · q95 < 目标下限 → 升分辨率（×1.2，上限 = min(4096, max(2×起始边长, 源图边长))），
+  //     用更多像素承载信息，直至最高质量可达目标
+  //   · q95 ≥ 下限 → 二分 [60,95] 找 ≤ 上限的最大质量
+  //   · 质量下限 60：宁可降分辨率也不低于此画质
+  //   · 硬约束：结果 ≤ 目标×(1+容差)；内容过简时返回最大可达并提示
+  async function jpegToTarget(canvas, targetBytes, tolerance, maxEdge, srcMaxEdge) {
+    const low = targetBytes * (1 - tolerance);
     const high = targetBytes * (1 + tolerance);
+    const upper = Math.min(4096, Math.max(maxEdge * 4, srcMaxEdge));
+    let edge = maxEdge;
+    let cur = canvas;
     let best = null;
     let bestDiff = Infinity;
-    let edge = maxEdge;
-    while (edge >= 48) {
-      const cur = edge === maxEdge ? canvas : scaleCanvasByEdge(canvas, edge);
-      const track = (blob, q) => {
-        const diff = Math.abs(blob.size - targetBytes);
-        if (diff < bestDiff) { bestDiff = diff; best = { blob, q, edge }; }
-      };
-      // 1) 触顶检查：当前分辨率下最高质量即可满足 → 输出（不再降分辨率）
+    const track = (blob, q) => {
+      const diff = Math.abs(blob.size - targetBytes);
+      if (diff < bestDiff) { bestDiff = diff; best = { blob, q, edge }; }
+    };
+    for (;;) {
+      // 1) 触顶：最高质量仍低于目标下限 → 升分辨率
       const q95 = await toBlobJpeg(cur, 95);
       track(q95, 95);
-      if (q95.size <= high) return best;
-      // 2) 二分 [60,95] 找 ≤ 上限的最大质量（画质下限 60，绝不低于此质量压缩）
+      if (q95.size < low) {
+        if (edge >= upper) return best; // 已达上限：内容不足以达标，返回最大可达
+        edge = Math.round(edge * 1.2);
+        cur = scaleCanvasByEdge(canvas, edge);
+        continue;
+      }
+      // 2) 二分 [60,95] 找 ≤ 上限的最大质量
       let lo = 60, hi = 95;
       let found = null;
       for (let i = 0; i < 12; i++) {
@@ -991,11 +999,19 @@ details.advanced .settings-grid { padding: 8px 0 10px; }
         if (blob.size <= high) { found = { blob, q }; lo = q + 1; }
         else hi = q - 1;
       }
-      if (found) return { blob: found.blob, q: found.q, edge };
-      // 3) 当前分辨率无解（q60 都超限）→ 降分辨率（-20%/档）
+      if (found) {
+        if (found.blob.size >= low) return { blob: found.blob, q: found.q, edge }; // 命中目标窗口
+        // 质量档粒度跳过窗口（found 略低于下限）→ 升分辨率细化档位
+        if (edge >= upper) return { blob: found.blob, q: found.q, edge };
+        edge = Math.round(edge * 1.2);
+        cur = scaleCanvasByEdge(canvas, edge);
+        continue;
+      }
+      // 3) q60 超限 → 降分辨率（画质下限保护）
+      if (edge <= 48) return best;
       edge = Math.round(edge * 0.8);
+      cur = scaleCanvasByEdge(canvas, edge);
     }
-    return best; // 触底兜底：返回全程最接近（理论上不会发生）
   }
 
   // PNG（画质优先）：直通 → 调色板量化（下限 16 色，避免色带）→ 降分辨率（-25%/档）
@@ -1047,9 +1063,12 @@ details.advanced .settings-grid { padding: 8px 0 10px; }
     if (ext === 'png') {
       item.resultBlob = await pngToTarget(canvas, s.targetBytes, s.tolerance, s.maxEdge);
     } else {
-      const r = await jpegToTarget(canvas, s.targetBytes, s.tolerance, s.maxEdge);
+      const srcMaxEdge = Math.max(crop.w, crop.h); // 裁剪后的源图最大边，作为升分辨率上限参考
+      const r = await jpegToTarget(canvas, s.targetBytes, s.tolerance, s.maxEdge, srcMaxEdge);
       item.resultBlob = r.blob;
-      if (r.edge < s.maxEdge) item.note = '分辨率降至 ' + r.edge + 'px 以达目标';
+      if (r.edge > s.maxEdge) item.note = '为达目标放大至 ' + r.edge + 'px';
+      else if (r.edge < s.maxEdge) item.note = '画质优先降至 ' + r.edge + 'px';
+      else if (r.blob.size < s.targetBytes * (1 - s.tolerance)) item.note = '内容简单，已达最大可达大小';
     }
     item.resultSize = item.resultBlob.size;
     item.outName = item.name.replace(/\.[^.]+$/, '') + '.' + ext;

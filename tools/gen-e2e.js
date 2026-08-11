@@ -69,7 +69,7 @@ const DRIVER = `
 
       const input = document.querySelector('#fileInput');
 
-      // 附加 JPEG 输入：240x240 随机像素合成图（真实照片级熵，q95≈58KB，与照片曲线同构）
+      // 附加 JPEG 输入 1：240x240 随机像素合成图（真实照片级熵，q95≈58KB，与照片曲线同构）
       async function makeJpegFixture() {
         const c = document.createElement('canvas');
         c.width = 240; c.height = 240;
@@ -85,6 +85,27 @@ const DRIVER = `
         ctx.putImageData(img, 0, 0);
         const jpgBlob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.92));
         return new File([jpgBlob], 'photo-input.jpg', { type: 'image/jpeg' });
+      }
+
+      // 附加 JPEG 输入 2：240x240 渐变 + 轻度噪声（低熵但有纹理，240px 下 q95≈23KB
+      // → 默认 50KB 目标必须升分辨率才能达标，验证“边长由目标实时确定”）
+      async function makeSmoothJpegFixture() {
+        const c = document.createElement('canvas');
+        c.width = 240; c.height = 240;
+        const ctx = c.getContext('2d');
+        const grad = ctx.createLinearGradient(0, 0, 240, 240);
+        grad.addColorStop(0, '#4f8cff');
+        grad.addColorStop(1, '#ffb04f');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 240, 240);
+        const img = ctx.getImageData(0, 0, 240, 240);
+        for (let i = 0; i < img.data.length; i += 4) {
+          const n = Math.floor(Math.random() * 20) - 10;
+          img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+        }
+        ctx.putImageData(img, 0, 0);
+        const jpgBlob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.92));
+        return new File([jpgBlob], 'smooth-input.jpg', { type: 'image/jpeg' });
       }
 
       async function importFiles(files) {
@@ -109,6 +130,7 @@ const DRIVER = `
           files.push(new File([u8], name, { type: 'image/png' }));
         }
         files.push(await makeJpegFixture());
+        files.push(await makeSmoothJpegFixture());
         return files;
       }
 
@@ -128,7 +150,7 @@ const DRIVER = `
           },
           180000, '转换完成'
         );
-        report(finished, '目标 ' + targetKB + ' KB：转换全部完成（8 张：7 PNG + 1 JPEG）');
+        report(finished, '目标 ' + targetKB + ' KB：转换全部完成（9 张：7 PNG + 2 JPEG）');
         // 校验
         const sizes = [];
         for (const row of document.querySelectorAll('.file-row')) {
@@ -190,8 +212,13 @@ const DRIVER = `
         }
         const pngOver = sizes.filter((s) => s.name.endsWith('.png') && isFinite(s.kb) && s.kb > upper);
         report(pngOver.length === 0, '目标 ' + targetKB + ' KB：PNG 输入全部 ≤ ' + upper.toFixed(2) + ' KB');
+        // 低熵 JPEG（平滑渐变）：必须通过升分辨率实时确定边长才能达标（核心验证）
+        const smooth = sizes.find((s) => s.name === 'smooth-input.jpg');
+        const smoothHit = smooth && isFinite(smooth.kb) && smooth.kb >= targetKB * 0.9 && smooth.kb <= upper;
+        report(!!smoothHit, '目标 ' + targetKB + ' KB：低熵图升分辨率命中 [' + (targetKB * 0.9).toFixed(1) + ', ' + upper.toFixed(2) + ']（' +
+          (smooth ? smooth.kb + ' KB' : '无') + '）');
         const valid = sizes.filter((s) => s.status === '完成' && isFinite(s.kb) && s.kb > 0);
-        report(valid.length === 8, '目标 ' + targetKB + ' KB：全部输出有效（' + valid.length + '/8）');
+        report(valid.length === 9, '目标 ' + targetKB + ' KB：全部输出有效（' + valid.length + '/9）');
         if (!keepList) {
           document.querySelector('#btnClearAll').click();
           await tick(200);
@@ -244,7 +271,40 @@ const DRIVER = `
         report(!!rowDone, '单张重转完成');
       }
 
-      // 7. 无“纯本地”等文案（排除 script 内的测试脚本自身文本）
+      // 7. 诊断：低熵图升分辨率时 q95 大小的真实增长曲线
+      {
+        try {
+          const c = document.createElement('canvas');
+          c.width = 240; c.height = 240;
+          const ctx = c.getContext('2d');
+          const grad = ctx.createLinearGradient(0, 0, 240, 240);
+          grad.addColorStop(0, '#4f8cff');
+          grad.addColorStop(1, '#ffb04f');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, 240, 240);
+          const img = ctx.getImageData(0, 0, 240, 240);
+          for (let i = 0; i < img.data.length; i += 4) {
+            const n = Math.floor(Math.random() * 20) - 10;
+            img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+          }
+          ctx.putImageData(img, 0, 0);
+          const edges = [240, 480, 960, 1920, 3840];
+          const row = [];
+          for (const e of edges) {
+            const cc = document.createElement('canvas');
+            cc.width = e; cc.height = e;
+            const cctx = cc.getContext('2d');
+            cctx.imageSmoothingEnabled = true;
+            cctx.imageSmoothingQuality = 'high';
+            cctx.drawImage(c, 0, 0, e, e);
+            const b = await new Promise((res) => cc.toBlob(res, 'image/jpeg', 0.95));
+            row.push(e + ':' + (b.size / 1024).toFixed(1));
+          }
+          report(true, '低熵图 q95 增长曲线(KB): ' + row.join(' '));
+        } catch (e) { report(false, '诊断失败: ' + e.message); }
+      }
+
+      // 8. 无“纯本地”等文案（排除 script 内的测试脚本自身文本）
       {
         const clone = document.body.cloneNode(true);
         clone.querySelectorAll('script').forEach((s) => s.remove());
