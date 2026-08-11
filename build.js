@@ -11,6 +11,8 @@ html = html.replace('<!--STYLE-->', '<style>\n' + read('src/style.css') + '\n</s
 // mozjpeg Emscripten glue：ESM → 全局；import.meta.url 在内联 script 非法 → 安全替换
 let glue = read('vendor/mozjpeg_enc.js');
 glue = glue.replace('import.meta.url="https://localhost"', 'void 0');
+// new URL(..., import.meta.url) 在初始化时无条件执行：替换为常量（wasm 经 wasmBinary 注入）
+glue = glue.replace('new URL("mozjpeg_enc.wasm",import.meta.url).href', '"mozjpeg_enc.wasm"');
 glue = glue.replace(/import\.meta\.url/g, '""');
 glue = glue.replace('export default Module;', 'window.MozjpegEnc = Module;');
 // Emscripten 的 wasm 备用加载路径（fetch/XMLHttpRequest）：wasmBinary 注入时永不执行；

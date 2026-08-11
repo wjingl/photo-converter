@@ -291,7 +291,36 @@ const DRIVER = `
         report(!!rowDone, '单张重转完成');
       }
 
-      // 7. 诊断：低熵图升分辨率时 q95 大小的真实增长曲线
+      // 7. mozjpeg 高质量编码器显式验证：内嵌 WASM 实例化 + 实际编码
+      {
+        try {
+          const b64 = document.getElementById('mozjpegWasm').textContent.trim();
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const mod = await window.MozjpegEnc({ wasmBinary: bytes.buffer });
+          const c = document.createElement('canvas');
+          c.width = 64; c.height = 64;
+          const ctx = c.getContext('2d');
+          const grad = ctx.createLinearGradient(0, 0, 64, 64);
+          grad.addColorStop(0, '#f0f');
+          grad.addColorStop(1, '#0ff');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, 64, 64);
+          const data = ctx.getImageData(0, 0, 64, 64).data;
+          const buf = mod.encode(data, 64, 64, {
+            quality: 90, baseline: false, arithmetic: false, progressive: true,
+            optimize_coding: true, smoothing: 0, color_space: 3, quant_table: 3,
+            trellis_multipass: false, trellis_opt_zero: false, trellis_opt_table: false,
+            trellis_loops: 1, auto_subsample: true, chroma_subsample: 2,
+            separate_chroma_quality: false, chroma_quality: 90,
+          });
+          report(!!buf && buf.byteLength > 100,
+            'mozjpeg WASM 实例化并成功编码（' + (buf ? buf.byteLength : 0) + ' B @ q90）');
+        } catch (e) { report(false, 'mozjpeg WASM 验证失败: ' + e.message); }
+      }
+
+      // 8. 诊断：低熵图升分辨率时 q95 大小的真实增长曲线
       {
         try {
           const c = document.createElement('canvas');

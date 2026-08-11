@@ -473,9 +473,13 @@
   async function encodeJpegMoz(data, w, h, quality) {
     const mod = await initMozjpeg();
     if (!mod) return null;
+    // mozjpeg wasm 要求完整 options（缺字段即抛 Missing field）
     const opt = {
-      quality, progressive: true, optimize_coding: true,
-      auto_subsample: true, chroma_subsampling: 2,
+      quality, baseline: false, arithmetic: false, progressive: true,
+      optimize_coding: true, smoothing: 0, color_space: 3, quant_table: 3,
+      trellis_multipass: false, trellis_opt_zero: false, trellis_opt_table: false,
+      trellis_loops: 1, auto_subsample: true, chroma_subsample: 2,
+      separate_chroma_quality: false, chroma_quality: 75,
     };
     const buf = mod.encode(data, w, h, opt);
     return new Uint8Array(buf);
@@ -490,18 +494,16 @@
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     let q = Math.min(95, Math.max(60, q0 + 6)); // 预补偿 mozjpeg 的省空间优势
-    let best = null;
-    let bestDiff = Infinity;
-    for (let i = 0; i < 4; i++) {
+    let bestFit = null; // ≤ 上限的最佳结果（硬约束：绝不返回超限值）
+    for (let i = 0; i < 5; i++) {
       const bytes = await encodeJpegMoz(data, canvas.width, canvas.height, q);
       if (!bytes) return null;
-      const diff = Math.abs(bytes.length - targetBytes);
-      if (diff < bestDiff) { bestDiff = diff; best = bytes; }
-      if (bytes.length >= low && bytes.length <= high) return bytes;
+      if (bytes.length >= low && bytes.length <= high) return bytes; // 精确命中
+      if (bytes.length <= high) bestFit = bytes; // 触顶/内容限制（合法）
       if (bytes.length < low) q = Math.min(95, q + 3);
       else q = Math.max(55, q - 3);
     }
-    return best || null;
+    return bestFit; // null → 回退原生（原生搜索结果已命中窗口）
   }
 
   // JPEG（源分辨率优先）：画布 = 源裁剪尺寸（绝不无故缩小源）。
