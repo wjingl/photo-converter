@@ -607,7 +607,7 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
     cancel: false,
     nextId: 1,
   };
-  const SETTINGS_KEY = 'pi-settings-v1';
+  const SETTINGS_KEY = 'pi-settings-v2'; // v2：默认输出尺寸改为 1.2×1.8cm，旧缓存(v1)失效
   const IMAGE_RE = /\.(jpe?g|png|webp|bmp|gif|avif|svg)$/i;
   const yieldUI = () => new Promise((r) => setTimeout(r, 0));
   const BASE_DPI = 400; // 像素精度的演算起点（1.5cm → 236px）
@@ -1212,28 +1212,36 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
     return m.slice(0, 120);
   }
 
+  // 并行转换：并发池 2-4 路。解码(createImageBitmap)与压缩(CompressionStream)
+  // 运行在浏览器内部线程，与主线程的 canvas 编码交错推进，显著缩短批量总时长。
   async function convertAll() {
     if (state.converting) return;
     state.converting = true;
     state.cancel = false;
     const pending = state.items.filter((i) => i.status === 'waiting' || i.status === 'error');
-    for (const item of pending) {
-      if (state.cancel) break;
-      item.status = 'processing';
-      item.error = '';
-      item.note = '';
-      updateRow(item);
-      await yieldUI();
-      try {
-        await convertOne(item);
-      } catch (err) {
-        item.status = 'error';
-        item.error = friendlyError(err);
+    const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
+    const CONCURRENCY = Math.max(1, Math.min(4, cores - 1));
+    let idx = 0;
+    const processOne = async () => {
+      while (idx < pending.length && !state.cancel) {
+        const item = pending[idx++];
+        item.status = 'processing';
+        item.error = '';
+        item.note = '';
+        updateRow(item);
+        await yieldUI();
+        try {
+          await convertOne(item);
+        } catch (err) {
+          item.status = 'error';
+          item.error = friendlyError(err);
+        }
+        updateRow(item);
+        updateStats();
+        updateButtons();
       }
-      updateRow(item);
-      updateStats();
-      updateButtons();
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, () => processOne()));
     state.converting = false;
     updateStats();
     updateButtons();
