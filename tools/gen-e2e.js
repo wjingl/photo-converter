@@ -178,43 +178,13 @@ const DRIVER = `
         else if (jkb >= targetKB * 0.98) { jpegOk = true; jpegMode = '精确命中'; }
         else { jpegOk = jkb > 5 && jkb > upper * 0.5; jpegMode = '内容受限（触顶/粒度）'; }
         report(!!jpegOk, '目标 ' + targetKB + ' KB：JPEG 输入' + jpegMode + '（' + jkb + ' KB，硬约束 ≤ ' + upper.toFixed(1) + '）');
-        if (!jpegOk && !isCap) {
-          // 诊断：按 photo-input 相同路径合成（1200² 随机 → 240），扫曲线并模拟二分轨迹
-          try {
-            const src = document.createElement('canvas');
-            src.width = 1200; src.height = 1200;
-            const sctx = src.getContext('2d');
-            const img = sctx.createImageData(1200, 1200);
-            const d = img.data;
-            for (let i = 0; i < d.length; i += 4) {
-              d[i] = Math.random() * 255 | 0; d[i + 1] = Math.random() * 255 | 0; d[i + 2] = Math.random() * 255 | 0; d[i + 3] = 255;
-            }
-            sctx.putImageData(img, 0, 0);
-            const c = document.createElement('canvas');
-            c.width = 240; c.height = 240;
-            const ctx = c.getContext('2d', { willReadFrequently: true });
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(src, 0, 0, 240, 240);
-            const toBlob = (q) => new Promise((res) => c.toBlob(res, 'image/jpeg', q / 100));
-            const trace = [];
-            let lo = 30, hi = 95, bestQ = -1, bestDiff = 1e9;
-            for (let i = 0; i < 16; i++) {
-              const q = Math.round((lo + hi) / 2);
-              const blob = await toBlob(q);
-              const kb = blob.size / 1024;
-              const diff = Math.abs(blob.size - 20 * 1024);
-              if (diff < bestDiff) { bestDiff = diff; bestQ = q; }
-              trace.push('q' + q + '=' + kb.toFixed(1));
-              if (kb < 19.6) lo = q + 1;
-              else if (kb > 20.4) hi = q - 1;
-              else { trace.push('HIT'); break; }
-            }
-            report(true, '二分轨迹(20KB, photo-input 同路径): ' + trace.join(' ') + ' bestQ=' + bestQ);
-          } catch (e) { report(false, '诊断失败: ' + e.message); }
-        }
         const pngOver = sizes.filter((s) => s.name.endsWith('.png') && isFinite(s.kb) && s.kb > upper);
         report(pngOver.length === 0, '目标 ' + targetKB + ' KB：PNG 输入全部 ≤ ' + upper.toFixed(2) + ' KB');
+        // PNG 低熵图也参与 DPI 演算（升像素 + 量化命中目标区间，非固定 236px）
+        const bigPhoto = sizes.find((s) => s.name === 'big-photo.png');
+        const bigHit = bigPhoto && isFinite(bigPhoto.kb) && bigPhoto.kb >= targetKB * 0.9 && bigPhoto.kb <= upper;
+        report(!!bigHit, '目标 ' + targetKB + ' KB：PNG 低熵图演算命中 [' + (targetKB * 0.9).toFixed(1) + ', ' + upper.toFixed(2) + ']（' +
+          (bigPhoto ? bigPhoto.kb + ' KB' : '无') + '）');
         // 低熵 JPEG（平滑渐变）：必须通过升分辨率实时确定边长才能达标（核心验证）
         const smooth = sizes.find((s) => s.name === 'smooth-input.jpg');
         const smoothHit = smooth && isFinite(smooth.kb) && smooth.kb >= targetKB * 0.9 && smooth.kb <= upper;
@@ -340,8 +310,8 @@ const DRIVER = `
       // 轮 2：30 KB（落在曲线可命中区，验证二分搜索精确命中）
       await convertRound(30, ['photo-input.jpg'], false);
 
-      // 轮 3：20 KB（低于触顶点且窗口窄 → 验证硬约束 ≤ 上限 + 内容受限兜底）
-      await convertRound(20, ['photo-input.jpg'], false);
+      // 轮 3：256 KB（大目标 → 验证演算上限随目标增大、大像素命中）
+      await convertRound(256, ['photo-input.jpg'], false);
     } catch (e) {
       report(false, '驱动异常: ' + e.message + ' | ' + (e.stack || '').split('\\n')[0]);
     }

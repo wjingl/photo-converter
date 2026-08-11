@@ -29,15 +29,24 @@
   function cmToPx(cm, dpi) {
     return Math.max(8, Math.round((cm / 2.54) * dpi));
   }
+  // 起始像素随目标大小预判（像素 ∝ √目标大小）：目标大 → 起点高，减少演算爬升；非固定值
+  function startPx(basePx, targetKB) {
+    return Math.max(48, Math.round(basePx * Math.sqrt(targetKB / 50)));
+  }
   // 像素边长 + 物理最长边(cm) → 演算出的像素精度（DPI）
   function dpiFromPx(px, cm) {
     return Math.round(px / (cm / 2.54));
   }
+  // 演算上限：随目标大小增长但不过度（30KB–2MB 目标 → 上限 2×基准 ~ 1493px，硬顶 2048px）
+  function calcUpper(base, targetKB) {
+    return Math.min(2048, Math.max(base * 2, Math.round(base * Math.sqrt(targetKB / 50))));
+  }
   function currentSettings() {
     const s = state.settings;
     return {
+      targetKB: s.targetKB,
       targetBytes: Math.max(1, Math.round(s.targetKB * 1024)),
-      baseW: cmToPx(s.sizeW, BASE_DPI), // 起始像素（演算起点，非固定输出）
+      baseW: cmToPx(s.sizeW, BASE_DPI), // 基准像素（仅定比例与演算起点）
       baseH: cmToPx(s.sizeH, BASE_DPI),
       sizeW: s.sizeW, // 物理尺寸（统一约束）
       sizeH: s.sizeH,
@@ -294,7 +303,7 @@
   }
   function bindSettings() {
     const set = (key, val) => { state.settings[key] = val; saveSettings(); };
-    $('#targetKB').addEventListener('change', (e) => set('targetKB', clampNum(e.target.value, 5, 5120, 50)));
+    $('#targetKB').addEventListener('change', (e) => { set('targetKB', clampNum(e.target.value, 30, 2048, 50)); updatePxHint(); });
     $('#sizeW').addEventListener('change', (e) => { set('sizeW', clampNum(e.target.value, 0.2, 50, 1.5)); updatePxHint(); });
     $('#sizeH').addEventListener('change', (e) => { set('sizeH', clampNum(e.target.value, 0.2, 50, 1.5)); updatePxHint(); });
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
@@ -303,9 +312,11 @@
   }
   function updatePxHint() {
     const s = state.settings;
-    const w = cmToPx(s.sizeW, BASE_DPI);
-    const h = cmToPx(s.sizeH, BASE_DPI);
-    $('#pxHint').textContent = '起始约 ' + w + ' × ' + h + ' 像素（DPI 随目标大小实时演算）';
+    const kb = clampNum(s.targetKB, 5, 5120, 50);
+    const f = Math.sqrt(kb / 50);
+    const w = Math.max(48, Math.round(cmToPx(s.sizeW, BASE_DPI) * f));
+    const h = Math.max(48, Math.round(cmToPx(s.sizeH, BASE_DPI) * f));
+    $('#pxHint').textContent = '起始约 ' + w + ' × ' + h + ' 像素（随目标大小与内容自动演算，非固定）';
   }
   function clampNum(v, min, max, fallback) {
     const n = parseFloat(v);
@@ -419,16 +430,16 @@
   }
 
   // JPEG（DPI 演算）：物理尺寸固定，像素精度由目标大小实时演算——逐图独立。
-  //   · 当前像素下 q95 < 目标下限 → 提高像素精度（边长 ×1.2，上限 = 源图与基准的较大者 × 2），
+  //   · 当前像素下 q95 < 目标下限 → 提高像素精度（边长 ×1.2，上限由目标大小决定，不过度），
   //     放大后轻度锐化；直至最高质量可达目标
   //   · q95 ≥ 下限 → 二分 [60,95] 找 ≤ 上限的最大质量
   //   · 质量下限 60：宁可降低像素精度也不低于此画质
   //   · 硬约束：结果 ≤ 目标×(1+容差)；内容过简时返回最大可达并提示
-  async function jpegToTarget(canvas, targetBytes, tolerance, srcMaxEdge) {
+  async function jpegToTarget(canvas, targetBytes, tolerance, targetKB) {
     const low = targetBytes * (1 - tolerance);
     const high = targetBytes * (1 + tolerance);
     const base = Math.max(canvas.width, canvas.height);
-    const upper = Math.min(4096, Math.max(srcMaxEdge, base) * 2);
+    const upper = calcUpper(base, targetKB);
     let edge = base;
     let cur = canvas;
     let best = null;
@@ -475,33 +486,49 @@
     }
   }
 
-  // PNG（固定统一尺寸，无损）：直通 → 调色板量化（256→128→64→32→16→8→4）
-  // 硬约束：结果 ≤ target*(1+tol)；触顶输出最大可达
-  async function pngToTarget(canvas, targetBytes, tolerance, phys) {
+  // PNG（无损，DPI 演算）：直通文件大小随像素单调递增 →
+  //   在 [48px, 演算上限] 上二分像素，求「直通 ≤ 上限」的最大像素：
+  //   · 命中 [下限, 上限] → 无损直通输出（无任何量化损失）
+  //   · 上限像素直通仍低于下限 → 内容限制，返回最大可达
+  // 硬约束：结果 ≤ target*(1+tol)
+  async function pngToTarget(canvas, targetBytes, tolerance, physMaxCm, targetKB) {
+    const low = targetBytes * (1 - tolerance);
     const limit = targetBytes * (1 + tolerance);
-    const colorSteps = [256, 128, 64, 32, 16, 8, 4];
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    let hasAlpha = false;
-    for (let i = 3; i < data.data.length; i += 4) {
-      if (data.data[i] !== 255) { hasAlpha = true; break; }
+    const base = Math.max(canvas.width, canvas.height);
+    const upper = calcUpper(base, targetKB);
+    const getData = (c) => c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height);
+    const encode = async (c) => {
+      const data = getData(c);
+      let hasAlpha = false;
+      for (let i = 3; i < data.data.length; i += 4) {
+        if (data.data[i] !== 255) { hasAlpha = true; break; }
+      }
+      const phys = dpiFromPx(Math.max(c.width, c.height), physMaxCm);
+      const bytes = await PI.encodePng({
+        width: data.width, height: data.height,
+        rgba: data.data, mode: hasAlpha ? 'rgba' : 'rgb', phys,
+      });
+      return { bytes, phys };
+    };
+    // 边界：演算上限像素下直通仍低于下限 → 内容限制
+    const up = await encode(scaleCanvasByEdge(canvas, upper));
+    if (up.bytes.length < low) {
+      return { blob: new Blob([up.bytes], { type: 'image/png' }), edge: upper };
     }
-    const enc = (mode, extra) => PI.encodePng({
-      width: data.width, height: data.height,
-      rgba: data.data,
-      indices: extra && extra.indices,
-      palette: extra && extra.palette,
-      mode, phys,
-    });
-    const direct = await enc(hasAlpha ? 'rgba' : 'rgb');
-    if (direct.length <= limit) return new Blob([direct], { type: 'image/png' });
-    let lastBytes = direct;
-    for (const colors of colorSteps) {
-      const q = PI.quantize(data.data, colors);
-      lastBytes = await enc('palette', { indices: q.indices, palette: q.palette });
-      if (lastBytes.length <= limit) return new Blob([lastBytes], { type: 'image/png' });
+    // 二分像素 [48, upper]：直通 ≤ 上限的最大像素
+    let lo = 48, hi = upper;
+    while (lo < hi) {
+      const mid = Math.round((lo + hi + 1) / 2);
+      const r = await encode(scaleCanvasByEdge(canvas, mid));
+      if (r.bytes.length <= limit) lo = mid;
+      else hi = mid - 1;
     }
-    return new Blob([lastBytes], { type: 'image/png' });
+    const fin = await encode(scaleCanvasByEdge(canvas, lo));
+    if (fin.bytes.length >= low) {
+      return { blob: new Blob([fin.bytes], { type: 'image/png' }), edge: lo };
+    }
+    // 直通曲线在目标窗口处跳跃（内容不足以恰在窗口内）→ 输出 ≤ 上限的最接近值
+    return { blob: new Blob([fin.bytes], { type: 'image/png' }), edge: lo };
   }
 
   // ---------- 转换主流程 ----------
@@ -517,25 +544,27 @@
     const src = await loadBitmap(item.file);
     const { w: sw, h: sh } = srcDims(src);
     const crop = PI.computeCrop(sw, sh, [s.baseW, s.baseH]);
-    let canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, s.baseW, s.baseH);
-    const needEnhance = s.enhance && Math.max(crop.w, crop.h) < Math.max(s.baseW, s.baseH);
+    // 起始像素随目标大小预判（√ 关系）——非固定值，演算中可继续升降
+    const startW = startPx(s.baseW, s.targetKB);
+    const startH = startPx(s.baseH, s.targetKB);
+    let canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, startW, startH);
+    const needEnhance = s.enhance && Math.max(crop.w, crop.h) < Math.max(startW, startH);
     if (needEnhance) enhanceCanvas(canvas);
     const ext = extFor(s, item.name);
     // 物理最长边（cm）—— 统一约束；DPI = 像素边长 / 物理边长
     const physMaxCm = Math.max(s.sizeW, s.sizeH);
+    const cw = canvas.width, ch = canvas.height;
+    const baseEdge = Math.max(cw, ch);
     if (ext === 'png') {
-      // PNG 无损：固定基准像素，DPI 恒为 BASE_DPI（pHYs 元数据）
-      const baseDpi = dpiFromPx(Math.max(s.baseW, s.baseH), physMaxCm);
-      item.resultBlob = await pngToTarget(canvas, s.targetBytes, s.tolerance, baseDpi);
-      item.outPxW = canvas.width;
-      item.outPxH = canvas.height;
-      item.outDpi = baseDpi;
-      if (item.resultBlob.size < s.targetBytes * (1 - s.tolerance)) {
-        item.note = 'PNG 无损输出，内容限制已达该尺寸下最大大小';
-      }
+      const r = await pngToTarget(canvas, s.targetBytes, s.tolerance, physMaxCm, s.targetKB);
+      item.resultBlob = r.blob;
+      item.outPxW = cw >= ch ? r.edge : Math.round(r.edge * cw / ch);
+      item.outPxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
+      item.outDpi = dpiFromPx(r.edge, physMaxCm);
+      if (item.resultBlob.size < s.targetBytes * (1 - s.tolerance)) item.note = 'PNG 无损输出，内容限制已达该尺寸下最大大小';
+      else if (r.edge > baseEdge) item.note = 'DPI 升至 ' + item.outDpi + '（' + item.outPxW + '×' + item.outPxH + 'px）以达目标';
     } else {
-      const srcMaxEdge = Math.max(crop.w, crop.h); // 源信息量上限参考
-      const r = await jpegToTarget(canvas, s.targetBytes, s.tolerance, srcMaxEdge);
+      const r = await jpegToTarget(canvas, s.targetBytes, s.tolerance, s.targetKB);
       // 演算的像素精度：物理尺寸不变，只调整像素
       const dpi = dpiFromPx(r.edge, physMaxCm);
       const cw = canvas.width, ch = canvas.height;
@@ -548,9 +577,8 @@
       item.outPxW = pxW;
       item.outPxH = pxH;
       item.outDpi = dpi;
-      const base = Math.max(s.baseW, s.baseH);
-      if (r.edge > base) item.note = 'DPI 升至 ' + dpi + '（' + pxW + '×' + pxH + 'px）以达目标';
-      else if (r.edge < base) item.note = 'DPI 降至 ' + dpi + ' 以保画质';
+      if (r.edge > baseEdge) item.note = 'DPI 升至 ' + dpi + '（' + pxW + '×' + pxH + 'px）以达目标';
+      else if (r.edge < baseEdge) item.note = 'DPI 降至 ' + dpi + ' 以保画质';
       else if (r.blob.size < s.targetBytes * (1 - s.tolerance)) item.note = '内容简单或尺寸不足，已达该尺寸下最大大小';
     }
     item.resultSize = item.resultBlob.size;
