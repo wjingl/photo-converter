@@ -441,8 +441,10 @@
   //   性能：JPEG 大小随质量近似对数线性 → 单次 q95 后估算起跳质量，局部二分
   //   （每张图约 4-6 次编码，而非 13-18 次）
   async function jpegToTarget(canvas, targetBytes, tolerance, targetKB) {
-    const low = targetBytes * (1 - tolerance);
-    const high = targetBytes * (1 + tolerance);
+    // 有效容差 = min(用户百分比, 5KB/目标)：保证最终大小与目标误差 ≤ 5KB（用户硬要求）
+    const MAX_ABS_ERR = 5000;
+    const low = Math.max(targetBytes * (1 - tolerance), targetBytes - MAX_ABS_ERR);
+    const high = Math.min(targetBytes * (1 + tolerance), targetBytes + MAX_ABS_ERR);
     const base = Math.max(canvas.width, canvas.height);
     const upper = calcUpper(base, targetKB);
     let edge = base;
@@ -515,8 +517,10 @@
   //   · 上限像素直通仍低于下限 → 内容限制，返回最大可达
   // 硬约束：结果 ≤ target*(1+tol)
   async function pngToTarget(canvas, targetBytes, tolerance, physMaxCm, targetKB) {
-    const low = targetBytes * (1 - tolerance);
-    const limit = targetBytes * (1 + tolerance);
+    // 有效容差 = min(用户百分比, 5KB/目标)：保证最终大小与目标误差 ≤ 5KB（用户硬要求）
+    const MAX_ABS_ERR = 5000;
+    const low = Math.max(targetBytes * (1 - tolerance), targetBytes - MAX_ABS_ERR);
+    const limit = Math.min(targetBytes * (1 + tolerance), targetBytes + MAX_ABS_ERR);
     const base = Math.max(canvas.width, canvas.height);
     const upper = calcUpper(base, targetKB);
     const getData = (c) => c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height);
