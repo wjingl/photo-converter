@@ -1092,24 +1092,34 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
 
   // 原生目录选择器（File System Access API）：Windows 上是标准「选择文件夹」对话框；
   // file:// 属于安全上下文，Chrome/Edge 86+ 可用；不可用时回退 webkitdirectory input
-  async function walkDirHandle(handle, base, files) {
+  async function walkDirHandle(handle, base, files, diag) {
+    let count = 0;
     for await (const entry of handle.values()) {
+      count++;
+      diag.push(entry.name + ' [kind=' + entry.kind + ']');
       if (entry.kind === 'file') {
         if (isImageFile(entry.name)) {
           const file = await entry.getFile();
           try { Object.defineProperty(file, 'webkitRelativePath', { value: base + entry.name }); } catch (e) { /* 只读则忽略 */ }
           files.push(file);
+        } else {
+          diag.push('  - 非图片格式跳过');
         }
       } else if (entry.kind === 'directory') {
-        await walkDirHandle(entry, base + entry.name + '/', files);
+        await walkDirHandle(entry, base + entry.name + '/', files, diag);
+      } else {
+        diag.push('  - 未知 kind');
       }
     }
+    diag.push('目录 [' + (handle.name || '?') + '] 共 ' + count + ' 个条目');
   }
   async function pickFolderViaPicker() {
     try {
       const dir = await window.showDirectoryPicker({ mode: 'read' });
       const files = [];
-      await walkDirHandle(dir, '', files);
+      const diag = [];
+      await walkDirHandle(dir, '', files, diag);
+      showPageError('目录[' + dir.name + '] 诊断: ' + diag.join(' | ').slice(0, 300));
       if (files.length) {
         for (const f of files) pushItem(f, f.webkitRelativePath || f.name);
         refresh();
