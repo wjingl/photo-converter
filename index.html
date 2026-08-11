@@ -161,12 +161,12 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
       </label>
       <label class="field">输出尺寸（物理）
         <div class="dim-row">
-          <input type="number" id="sizeW" min="0.2" max="50" step="0.1" value="1.5">
+          <input type="number" id="sizeW" min="0.2" max="50" step="0.1" value="1.2">
           <span class="dim-x">×</span>
-          <input type="number" id="sizeH" min="0.2" max="50" step="0.1" value="1.5">
+          <input type="number" id="sizeH" min="0.2" max="50" step="0.1" value="1.8">
           <span class="unit">cm</span>
         </div>
-        <span class="unit" id="pxHint">起始约 236 × 236 像素</span>
+        <span class="unit" id="pxHint">起始约 189 × 283 像素</span>
       </label>
       <label class="field">输出格式
         <select id="formatSelect">
@@ -602,7 +602,7 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
 
   const state = {
     items: [],
-    settings: { targetKB: 50, sizeW: 1.5, sizeH: 1.5, format: 'auto', enhance: true, tolerance: 2 },
+    settings: { targetKB: 50, sizeW: 1.2, sizeH: 1.8, format: 'auto', enhance: true, tolerance: 2 },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -1034,12 +1034,9 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
     return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', q / 100));
   }
 
-  // JPEG（DPI 演算）：物理尺寸固定，像素精度由目标大小实时演算——逐图独立。
-  //   · 当前像素下 q95 < 目标下限 → 提高像素精度（边长 ×1.2，上限由目标大小决定，不过度），
-  //     放大后轻度锐化；直至最高质量可达目标
-  //   · q95 ≥ 下限 → 二分 [60,95] 找 ≤ 上限的最大质量
-  //   · 质量下限 60：宁可降低像素精度也不低于此画质
-  //   · 硬约束：结果 ≤ 目标×(1+容差)；内容过简时返回最大可达并提示
+  // JPEG（DPI 演算，快速）：物理尺寸固定，像素精度与质量均由目标大小实时演算——逐图独立。
+  //   性能：JPEG 大小随质量近似对数线性 → 单次 q95 后估算起跳质量，局部二分
+  //   （每张图约 4-6 次编码，而非 13-18 次）
   async function jpegToTarget(canvas, targetBytes, tolerance, targetKB) {
     const low = targetBytes * (1 - tolerance);
     const high = targetBytes * (1 + tolerance);
@@ -1053,38 +1050,54 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
       const diff = Math.abs(blob.size - targetBytes);
       if (diff < bestDiff) { bestDiff = diff; best = { blob, q, edge }; }
     };
-    const upscale = () => {
-      edge = Math.round(edge * 1.2);
-      cur = scaleCanvasByEdge(canvas, edge);
-      lightSharpen(cur, 0.35); // 提高像素精度（插值放大）后锐化，避免虚化
-    };
-    for (;;) {
-      // 1) 触顶：当前像素精度下最高质量仍低于目标下限 → 提高像素精度（DPI 上调）
-      const q95 = await toBlobJpeg(cur, 95);
+    // 当前像素下的质量搜索：q95 触顶探测 + 估算起跳局部二分
+    const search = async (c) => {
+      const q95 = await toBlobJpeg(c, 95);
       track(q95, 95);
-      if (q95.size < low) {
-        if (edge >= upper) return best; // 已达上限：内容不足以达标，返回最大可达
-        upscale();
-        continue;
+      if (q95.size < low) return { type: 'under', blob: q95, q: 95 }; // 内容不足 → 升像素
+      if (q95.size <= high) return { type: 'hit', blob: q95, q: 95 }; // q95 直接命中
+      // 估算起跳：q 每档大小变化约 ×2^(1/15)（对数模型）
+      let q0 = Math.round(95 + 15 * Math.log2(high / q95.size));
+      q0 = Math.max(60, Math.min(95, q0));
+      if (q0 === 60) {
+        const b60 = await toBlobJpeg(c, 60);
+        track(b60, 60);
+        if (b60.size > high) return { type: 'over', blob: b60, q: 60 }; // 画质下限仍超 → 降像素
       }
-      // 2) 二分 [60,95] 找 ≤ 上限的最大质量
-      let lo = 60, hi = 95;
+      let lo = Math.max(60, q0 - 6), hi = Math.min(95, q0 + 6);
       let found = null;
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < 8; i++) {
         const q = Math.round((lo + hi) / 2);
-        const blob = await toBlobJpeg(cur, q);
+        const blob = await toBlobJpeg(c, q);
         track(blob, q);
+        if (blob.size >= low && blob.size <= high) return { type: 'hit', blob, q };
         if (blob.size <= high) { found = { blob, q }; lo = q + 1; }
         else hi = q - 1;
+        if (hi < lo) break;
       }
-      if (found) {
-        if (found.blob.size >= low) return { blob: found.blob, q: found.q, edge }; // 命中目标窗口
-        // 质量档粒度跳过窗口 → 提高像素精度细化档位
-        if (edge >= upper) return { blob: found.blob, q: found.q, edge };
-        upscale();
+      if (found) return { type: 'hit', blob: found.blob, q: found.q }; // ≤ high（可能略低于下限）
+      return { type: 'over', blob: null, q: 60 };
+    };
+    for (;;) {
+      const r = await search(cur);
+      if (r.type === 'hit' && r.blob.size >= low) return { blob: r.blob, q: r.q, edge };
+      if (r.type === 'hit' && r.blob.size < low) {
+        // 质量档粒度跳过窗口 → 升像素细化档位
+        if (edge >= upper) return { blob: r.blob, q: r.q, edge };
+        edge = Math.round(edge * 1.2);
+        cur = scaleCanvasByEdge(canvas, edge);
+        lightSharpen(cur, 0.35);
         continue;
       }
-      // 3) q60 超限 → 降低像素精度（画质下限保护）
+      if (r.type === 'under') {
+        // 内容不足 → 升像素（提高 DPI）
+        if (edge >= upper) return best || { blob: r.blob, q: r.q, edge };
+        edge = Math.round(edge * 1.2);
+        cur = scaleCanvasByEdge(canvas, edge);
+        lightSharpen(cur, 0.35);
+        continue;
+      }
+      // over → 降像素（画质下限保护）
       if (edge <= 48) return best;
       edge = Math.round(edge * 0.8);
       cur = scaleCanvasByEdge(canvas, edge);

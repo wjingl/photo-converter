@@ -507,10 +507,11 @@
     }
   }
 
-  // PNG（无损，DPI 演算）：直通文件大小随像素单调递增 →
-  //   在 [48px, 演算上限] 上二分像素，求「直通 ≤ 上限」的最大像素：
-  //   · 命中 [下限, 上限] → 无损直通输出（无任何量化损失）
-  //   · 上限像素直通仍低于下限 → 内容限制，返回最大可达
+  // PNG（无损，DPI 演算，快速）：直通大小随像素单调递增 →
+  //   先测起点：命中直接返回（常见高熵图 1 次编码）；
+  //   否则按方向缩小搜索区间后二分（每张图 2-6 次编码，而非 12 次）：
+  //   · 起点直通 < 下限 → 在 [起点, 演算上限] 二分（升方向，区间极窄）
+  //   · 起点直通 > 上限 → 在 [48, 起点] 二分（降方向）
   // 硬约束：结果 ≤ target*(1+tol)
   async function pngToTarget(canvas, targetBytes, tolerance, physMaxCm, targetKB) {
     const low = targetBytes * (1 - tolerance);
@@ -531,13 +532,24 @@
       });
       return { bytes, phys };
     };
-    // 边界：演算上限像素下直通仍低于下限 → 内容限制
-    const up = await encode(scaleCanvasByEdge(canvas, upper));
-    if (up.bytes.length < low) {
-      return { blob: new Blob([up.bytes], { type: 'image/png' }), edge: upper };
+    // 1) 起点探测：命中即返（最常见路径，1 次编码）
+    const baseR = await encode(canvas);
+    if (baseR.bytes.length >= low && baseR.bytes.length <= limit) {
+      return { blob: new Blob([baseR.bytes], { type: 'image/png' }), edge: base };
     }
-    // 二分像素 [48, upper]：直通 ≤ 上限的最大像素
-    let lo = 48, hi = upper;
+    let lo, hi;
+    if (baseR.bytes.length < low) {
+      // 2a) 内容不足 → 升方向：先确认演算上限是否可承载
+      const up = await encode(scaleCanvasByEdge(canvas, upper));
+      if (up.bytes.length < low) {
+        return { blob: new Blob([up.bytes], { type: 'image/png' }), edge: upper }; // 内容限制
+      }
+      lo = base; hi = upper;
+    } else {
+      // 2b) 起点已超限 → 降方向
+      lo = 48; hi = base;
+    }
+    // 3) 定向二分：直通 ≤ 上限的最大像素
     while (lo < hi) {
       const mid = Math.round((lo + hi + 1) / 2);
       const r = await encode(scaleCanvasByEdge(canvas, mid));
@@ -545,10 +557,6 @@
       else hi = mid - 1;
     }
     const fin = await encode(scaleCanvasByEdge(canvas, lo));
-    if (fin.bytes.length >= low) {
-      return { blob: new Blob([fin.bytes], { type: 'image/png' }), edge: lo };
-    }
-    // 直通曲线在目标窗口处跳跃（内容不足以恰在窗口内）→ 输出 ≤ 上限的最接近值
     return { blob: new Blob([fin.bytes], { type: 'image/png' }), edge: lo };
   }
 

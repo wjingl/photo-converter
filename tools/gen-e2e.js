@@ -59,8 +59,8 @@ const DRIVER = `
       // 1. UI 已渲染（boot 已执行）
       report(!!document.querySelector('#dropZone'), 'UI 渲染完成');
       report(document.querySelector('#targetKB').value === '50', '设置默认目标 50 KB');
-      report(document.querySelector('#sizeW').value === '1.5' && document.querySelector('#sizeH').value === '1.5',
-        '设置默认物理尺寸 1.5 × 1.5 cm');
+      report(document.querySelector('#sizeW').value === '1.2' && document.querySelector('#sizeH').value === '1.8',
+        '设置默认物理尺寸 1.2 × 1.8 cm');
       report(!document.querySelector('#dpi') && !document.querySelector('#maxEdge'),
         '无像素精度/最大边长配置（DPI 由目标大小实时演算）');
       // 探针：change 事件派发链路是否正常
@@ -227,14 +227,16 @@ const DRIVER = `
           if (!firstOpen && modal) { firstOpen = true; report(true, '预览弹层打开'); }
           const img = document.querySelector('.modal-img');
           const meta = document.querySelector('.modal-meta');
-          if (!img || img.naturalWidth !== img.naturalHeight) shapeOk = false; // 物理 1:1 → 像素正方形
+          // 物理 1.2 × 1.8 cm → 像素宽高比 2:3（±3%）
+          if (!img || !img.naturalWidth || !img.naturalHeight ||
+              Math.abs(img.naturalWidth / img.naturalHeight - 2 / 3) > 0.03) shapeOk = false;
           if (!meta || !/DPI/.test(meta.textContent)) dpiMetaOk = false;
           const close = document.querySelector('.modal-box .btn');
           if (close) close.click();
           await tick(150);
         }
         report(firstOpen, '预览弹层可用');
-        report(shapeOk, '全部输出像素保持统一比例（正方形）');
+        report(shapeOk, '全部输出像素保持统一比例（2:3）');
         report(dpiMetaOk, '预览显示演算出的 DPI 元数据');
         report(!document.querySelector('.modal-overlay'), '预览弹层全部关闭');
       }
