@@ -141,10 +141,11 @@ const DRIVER = `
         const dt = new DataTransfer();
         for (const f of files) dt.items.add(f);
         let importErr = '';
-        try { input.files = dt.files; } catch (e) { importErr = e.message; }
-        report(input.files.length === files.length,
-          'DataTransfer 注入 ' + input.files.length + ' 个文件 (err: ' + importErr + ')');
-        input.dispatchEvent(new Event('change', { bubbles: true }));
+        const folderInput = document.querySelector('#folderInput');
+        try { folderInput.files = dt.files; } catch (e) { importErr = e.message; }
+        report(folderInput.files.length === files.length,
+          'DataTransfer 注入 ' + folderInput.files.length + ' 个文件 (err: ' + importErr + ')');
+        folderInput.dispatchEvent(new Event('change', { bubbles: true }));
         await tick(300);
         const rows = document.querySelectorAll('.file-row');
         report(rows.length === files.length, '导入图片 ' + rows.length + ' 张');
@@ -152,15 +153,16 @@ const DRIVER = `
 
       async function makeFixtureFiles() {
         const files = [];
+        const withPath = (f, p) => { try { Object.defineProperty(f, 'webkitRelativePath', { value: p }); } catch (e) {} return f; };
         for (const [name, b64] of Object.entries(fixtureData)) {
           const bin = atob(b64);
           const u8 = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-          files.push(new File([u8], name, { type: 'image/png' }));
+          files.push(withPath(new File([u8], name, { type: 'image/png' }), '测试相册/' + name));
         }
-        files.push(await makeJpegFixture());
-        files.push(await makeSmoothJpegFixture());
-        files.push(await makeBadFixture());
+        files.push(withPath(await makeJpegFixture(), '测试相册/子目录/photo-input.jpg'));
+        files.push(withPath(await makeSmoothJpegFixture(), '测试相册/子目录/smooth-input.jpg'));
+        files.push(withPath(await makeBadFixture(), '测试相册/bad-input.jpg'));
         return files;
       }
 
@@ -411,7 +413,14 @@ const DRIVER = `
       report(!zipBtn.disabled, '下载 ZIP 按钮可用');
       zipBtn.click();
       await tick(2000);
-      report(true, '已触发 ZIP 下载');
+      report(true, '已触发 ZIP 下载（保留文件夹结构）');
+      // 平铺模式导出（第二个 ZIP）
+      const treeToggle = document.querySelector('#keepTree');
+      treeToggle.checked = false;
+      document.querySelector('#btnExportZip').click();
+      await tick(2500);
+      report(true, '已触发 ZIP 下载（平铺模式）');
+      treeToggle.checked = true;
       document.querySelector('#btnClearAll').click();
       await tick(200);
 

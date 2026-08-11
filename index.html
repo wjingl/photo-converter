@@ -113,6 +113,12 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
 .file-row .row-actions { display: flex; gap: 8px; flex: none; }
 .icon-btn { border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 13px; cursor: pointer; min-height: 40px; }
 .icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+.tree-toggle {
+  display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);
+  border: 1px solid var(--border); background: var(--card); border-radius: 10px;
+  padding: 8px 12px; cursor: pointer; min-height: 44px; user-select: none;
+}
+.tree-toggle input { width: 16px; height: 16px; flex: none; }
 
 .actionbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
@@ -188,7 +194,7 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
       </label>
       <label class="field">输出格式
         <select id="formatSelect">
-          <option value="png" selected>PNG（无损，默认）</option>
+          <option value="png" selected>PNG</option>
           <option value="jpeg">JPEG（.jpg）</option>
           <option value="jpg">JPG（.jpg）</option>
           <option value="auto">保持原格式</option>
@@ -225,6 +231,9 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
       <button type="button" class="btn" id="btnCancel" disabled>取消</button>
       <button type="button" class="btn" id="btnReconvert" disabled>重新转换</button>
       <button type="button" class="btn accent" id="btnExportZip" disabled>下载 ZIP</button>
+      <label class="tree-toggle" title="勾选：ZIP 内还原导入时的文件夹结构；取消：全部文件平铺在一起">
+        <input type="checkbox" id="keepTree" checked> 保留文件夹结构
+      </label>
       <button type="button" class="btn ghost" id="btnClearDone" disabled>移除已完成</button>
       <button type="button" class="btn ghost" id="btnClearAll" disabled>全部清除</button>
     </div>
@@ -1813,10 +1822,11 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
   async function exportZip() {
     const done = state.items.filter((i) => i.status === 'done');
     if (!done.length) return;
+    const keepTree = $('#keepTree').checked; // 勾选：ZIP 内还原文件夹结构；取消：全部平铺
     const entries = [];
     const used = new Set();
     for (const item of done) {
-      let name = sanitizeZipName(item.relPath);
+      let name = sanitizeZipName(keepTree ? item.relPath : item.name);
       let uniq = name;
       let k = 1;
       while (used.has(uniq)) {
@@ -1828,7 +1838,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       entries.push({ name: uniq, data: new Uint8Array(await item.resultBlob.arrayBuffer()) });
     }
     const zip = await PI.buildZip(entries);
-    const stamp = new Date().toISOString().slice(0, 10);
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
     downloadBlob(new Blob([zip], { type: 'application/zip' }), 'converted_' + stamp + '.zip');
   }
 

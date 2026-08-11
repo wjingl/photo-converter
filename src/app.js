@@ -859,10 +859,11 @@
   async function exportZip() {
     const done = state.items.filter((i) => i.status === 'done');
     if (!done.length) return;
+    const keepTree = $('#keepTree').checked; // 勾选：ZIP 内还原文件夹结构；取消：全部平铺
     const entries = [];
     const used = new Set();
     for (const item of done) {
-      let name = sanitizeZipName(item.relPath);
+      let name = sanitizeZipName(keepTree ? item.relPath : item.name);
       let uniq = name;
       let k = 1;
       while (used.has(uniq)) {
@@ -874,7 +875,7 @@
       entries.push({ name: uniq, data: new Uint8Array(await item.resultBlob.arrayBuffer()) });
     }
     const zip = await PI.buildZip(entries);
-    const stamp = new Date().toISOString().slice(0, 10);
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
     downloadBlob(new Blob([zip], { type: 'application/zip' }), 'converted_' + stamp + '.zip');
   }
 

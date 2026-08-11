@@ -102,6 +102,12 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
 .file-row .row-actions { display: flex; gap: 8px; flex: none; }
 .icon-btn { border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 13px; cursor: pointer; min-height: 40px; }
 .icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+.tree-toggle {
+  display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);
+  border: 1px solid var(--border); background: var(--card); border-radius: 10px;
+  padding: 8px 12px; cursor: pointer; min-height: 44px; user-select: none;
+}
+.tree-toggle input { width: 16px; height: 16px; flex: none; }
 
 .actionbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;

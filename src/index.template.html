@@ -48,7 +48,7 @@
       </label>
       <label class="field">输出格式
         <select id="formatSelect">
-          <option value="png" selected>PNG（无损，默认）</option>
+          <option value="png" selected>PNG</option>
           <option value="jpeg">JPEG（.jpg）</option>
           <option value="jpg">JPG（.jpg）</option>
           <option value="auto">保持原格式</option>
@@ -85,6 +85,9 @@
       <button type="button" class="btn" id="btnCancel" disabled>取消</button>
       <button type="button" class="btn" id="btnReconvert" disabled>重新转换</button>
       <button type="button" class="btn accent" id="btnExportZip" disabled>下载 ZIP</button>
+      <label class="tree-toggle" title="勾选：ZIP 内还原导入时的文件夹结构；取消：全部文件平铺在一起">
+        <input type="checkbox" id="keepTree" checked> 保留文件夹结构
+      </label>
       <button type="button" class="btn ghost" id="btnClearDone" disabled>移除已完成</button>
       <button type="button" class="btn ghost" id="btnClearAll" disabled>全部清除</button>
     </div>

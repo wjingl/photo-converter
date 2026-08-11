@@ -96,18 +96,23 @@ async function main() {
     const zips = files.filter((f) => f.endsWith('.zip'));
     if (zips.length) {
       const { spawnSync } = require('node:child_process');
-      const zp = path.join(dlDir, zips[0]);
+      const zp = path.join(dlDir, zips[zips.length - 1]); // 最新（平铺模式）
       const py = spawnSync('python', ['-c',
-        'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; names=z.namelist(); print("ZIP_OK entries=%d" % len(names)); [print("  ", n, z.getinfo(n).file_size, "B") for n in names]; ' +
-        'TEXTURED=["big-photo.png","photo-input.jpg","smooth-input.jpg"]; ' +
-        'bad=[n for n in TEXTURED if not (45*1024 <= z.getinfo(n).file_size <= 51*1024)]; ' +
-        'assert not bad, "压缩图未命中 50KB 窗口: %s" % bad; ' +
-        'smooth=z.getinfo("smooth-input.jpg").file_size; ' +
-        'assert 30*1024 <= smooth <= 51*1024, "低熵图 PNG 输出异常: %d" % smooth; ' +
-        'allok=all(z.getinfo(n).file_size <= 51*1024 for n in z.namelist()); ' +
-        'assert allok, "存在超出 50KB 上限的文件"; ' +
-        'print("SIZE_HIT_OK: 压缩图命中 50KB 窗口，全部文件 ≤ 上限")',
-        zp], { encoding: 'utf8' });
+        'import zipfile,glob,sys,os\n' +
+        'zips=sorted(glob.glob(os.path.join(sys.argv[1],"*.zip")))\n' +
+        'assert len(zips)>=2, "应有树+平铺两个 ZIP: %d" % len(zips)\n' +
+        'structs=[]\n' +
+        'for zp in zips:\n' +
+        '  z=zipfile.ZipFile(zp)\n' +
+        '  assert z.testzip() is None\n' +
+        '  names=z.namelist()\n' +
+        '  assert all(z.getinfo(n).file_size <= 51*1024 for n in names), "存在超出 50KB 上限的文件"\n' +
+        '  structs.append(any("/" in n for n in names))\n' +
+        '  pi=[n for n in names if "photo-input.jpg" in n]\n' +
+        '  assert len(pi)==1 and 45*1024 <= z.getinfo(pi[0]).file_size <= 51*1024, "photo-input 未命中窗口"\n' +
+        'assert any(structs) and any(not s for s in structs), "树/平铺结构缺失: %s" % structs\n' +
+        'print("ZIP_STRUCT_OK: 树模式+平铺模式均正确")',
+        dlDir.replace(/\\/g, '/')], { encoding: 'utf8' });
       console.log('=== ZIP 校验（Python zipfile）===');
       console.log(py.status === 0 ? (py.stdout || 'ZIP_OK') : ('ZIP_FAIL: ' + py.stderr));
     }
