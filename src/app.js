@@ -185,14 +185,24 @@
       e.preventDefault();
       dz.classList.remove('drag');
       try {
-        const entries = [];
-        for (const it of e.dataTransfer.items) {
-          if (it.webkitGetAsEntry) { const en = it.webkitGetAsEntry(); if (en) entries.push(en); }
-        }
         const before = state.items.length;
-        if (entries.length) await addDirectoryEntries(entries);
-        else addFiles(e.dataTransfer.files);
-        refresh();
+        // 方案 1（首选）：dataTransfer.files —— Chrome 拖文件夹时每个 File 自带 webkitRelativePath，
+        // 不依赖 webkitGetAsEntry 递归（file:// 下 entry.file() 可能静默失败）
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length) {
+          for (const f of files) {
+            if (isImageFile(f)) pushItem(f, f.webkitRelativePath || f.name);
+          }
+          refresh();
+        } else {
+          // 方案 2（兜底）：webkitGetAsEntry 递归
+          const entries = [];
+          for (const it of e.dataTransfer.items) {
+            if (it.webkitGetAsEntry) { const en = it.webkitGetAsEntry(); if (en) entries.push(en); }
+          }
+          if (entries.length) await addDirectoryEntries(entries);
+          refresh();
+        }
         if (state.items.length === before) showPageError('拖入内容中没有可用的图片（jpg/png/webp/bmp/gif/avif/svg）');
       } catch (err) {
         showPageError('拖入失败：' + (err && err.message || err));
