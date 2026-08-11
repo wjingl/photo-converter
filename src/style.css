@@ -21,6 +21,11 @@
   }
 }
 * { box-sizing: border-box; }
+/* 视觉隐藏（不用 display:none——避免部分浏览器对隐藏 file input 弹出普通文件选择器的怪癖） */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; opacity: 0;
+  pointer-events: none; overflow: hidden; clip: rect(0 0 0 0);
+}
 html, body { margin: 0; padding: 0; }
 body {
   background: var(--bg); color: var(--text);
