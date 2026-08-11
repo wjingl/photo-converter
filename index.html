@@ -1075,9 +1075,39 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     }
   }
 
+  // 原生目录选择器（File System Access API）：Windows 上是标准「选择文件夹」对话框；
+  // file:// 属于安全上下文，Chrome/Edge 86+ 可用；不可用时回退 webkitdirectory input
+  async function walkDirHandle(handle, base, files) {
+    for await (const entry of handle.values()) {
+      if (entry.kind === 'file') {
+        if (isImageFile(entry.name)) {
+          const file = await entry.getFile();
+          try { Object.defineProperty(file, 'webkitRelativePath', { value: base + entry.name }); } catch (e) { /* 只读则忽略 */ }
+          files.push(file);
+        }
+      } else if (entry.kind === 'directory') {
+        await walkDirHandle(entry, base + entry.name + '/', files);
+      }
+    }
+  }
+  async function pickFolderViaPicker() {
+    try {
+      const dir = await window.showDirectoryPicker({ mode: 'read' });
+      const files = [];
+      await walkDirHandle(dir, '', files);
+      if (files.length) {
+        for (const f of files) pushItem(f, f.webkitRelativePath || f.name);
+        refresh();
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // 用户取消
+      $('#folderInput').click(); // API 不可用 → 回退传统目录选择
+    }
+  }
+
   function bindImport() {
     $('#btnPickFiles').addEventListener('click', () => $('#fileInput').click());
-    $('#btnPickFolder').addEventListener('click', () => $('#folderInput').click());
+    $('#btnPickFolder').addEventListener('click', () => pickFolderViaPicker());
     const dz = $('#dropZone');
     // 点击拖放区等同「选择图片」（按钮点击不触发）
     dz.addEventListener('click', (e) => { if (e.target.closest('button')) return; $('#fileInput').click(); });
