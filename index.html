@@ -1138,7 +1138,9 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
 
   function bindImport() {
     $('#btnPickFiles').addEventListener('click', () => $('#fileInput').click());
-    $('#btnPickFolder').addEventListener('click', () => pickFolderViaPicker());
+    // 文件夹选择：webkitdirectory input 为主（FileList + 相对路径，兼容性最佳）；
+    // showDirectoryPicker 保留备用（个别环境 webkitdirectory 弹不出目录选择器时再切换）
+    $('#btnPickFolder').addEventListener('click', () => $('#folderInput').click());
     const dz = $('#dropZone');
     // 点击拖放区等同「选择图片」（按钮点击不触发）
     dz.addEventListener('click', (e) => { if (e.target.closest('button')) return; $('#fileInput').click(); });
@@ -1158,6 +1160,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       dz.classList.remove('drag');
       try {
         const before = state.items.length;
+        let lastDiag = '';
         // 方案 1（首选）：dataTransfer.files —— Chrome 拖文件夹时每个 File 自带 webkitRelativePath，
         // 不依赖 webkitGetAsEntry 递归（file:// 下 entry.file() 可能静默失败）
         const files = Array.from(e.dataTransfer.files);
@@ -1189,7 +1192,8 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
             if (collected.length) {
               // ok
             } else {
-              showPageError('拖入目录诊断: ' + diag.join(' | ').slice(0, 300));
+              lastDiag = diag.join(' | ');
+            showPageError('拖入目录诊断: ' + lastDiag.slice(0, 220));
             }
           } else {
             // 方案 3（兜底）：webkitGetAsEntry 递归
@@ -1201,7 +1205,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
             refresh();
           }
         }
-        if (state.items.length === before) showPageError('拖入内容中没有可用的图片（jpg/png/webp/bmp/gif/avif/svg）');
+        if (state.items.length === before) showPageError('拖入内容中没有可用的图片' + (lastDiag ? '（诊断: ' + lastDiag.slice(0, 220) + '）' : ''));
       } catch (err) {
         showPageError('拖入失败：' + (err && err.message || err));
       }
