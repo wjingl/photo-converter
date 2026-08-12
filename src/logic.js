@@ -186,15 +186,62 @@
       boxes[bestIdx] = { pix: box.pix.slice(0, mid) };
       boxes.push({ pix: box.pix.slice(mid) });
     }
-    const palette = [];
-    const indices = new Uint8Array(n);
-    for (let b = 0; b < boxes.length; b++) {
-      const box = boxes[b];
+    // median cut 切分完成 → 箱体平均色作初始格心
+    let centers = boxes.map((box) => {
       let r = 0, g = 0, bl = 0;
       for (const i of box.pix) { r += rgba[i * 4]; g += rgba[i * 4 + 1]; bl += rgba[i * 4 + 2]; }
       const k = Math.max(1, box.pix.length);
-      palette.push([Math.round(r / k), Math.round(g / k), Math.round(bl / k), 255]);
-      for (const i of box.pix) indices[i] = b;
+      return [Math.round(r / k), Math.round(g / k), Math.round(bl / k)];
+    });
+    // k-means 细化：格心收敛到簇均值——鲜艳色像素群获得自己的格心（箱体平均会冲淡它们）
+    if (centers.length > 1 && opaque.length > 0) {
+      const assign = new Uint16Array(n);
+      for (let it = 0; it < 8; it++) {
+        for (const i of opaque) {
+          let best = 0, bestD = Infinity;
+          for (let c = 0; c < centers.length; c++) {
+            const dr = rgba[i * 4] - centers[c][0], dg = rgba[i * 4 + 1] - centers[c][1], db = rgba[i * 4 + 2] - centers[c][2];
+            const d = dr * dr + dg * dg + db * db;
+            if (d < bestD) { bestD = d; best = c; }
+          }
+          assign[i] = best;
+        }
+        const sums = centers.map(() => [0, 0, 0, 0]);
+        for (const i of opaque) {
+          const c = assign[i];
+          sums[c][0] += rgba[i * 4]; sums[c][1] += rgba[i * 4 + 1]; sums[c][2] += rgba[i * 4 + 2]; sums[c][3]++;
+        }
+        for (let c = 0; c < centers.length; c++) {
+          if (sums[c][3] > 0) {
+            centers[c] = [Math.round(sums[c][0] / sums[c][3]), Math.round(sums[c][1] / sums[c][3]), Math.round(sums[c][2] / sums[c][3])];
+          }
+        }
+      }
+    }
+    // 合并近重复格心（切分出的多个 box 可能收敛到同色——浪费色数）
+    if (centers.length > 1) {
+      const keep = centers.map(() => true);
+      for (let a = 0; a < centers.length; a++) {
+        if (!keep[a]) continue;
+        for (let b = a + 1; b < centers.length; b++) {
+          if (!keep[b]) continue;
+          const dr = centers[a][0] - centers[b][0], dg = centers[a][1] - centers[b][1], db = centers[a][2] - centers[b][2];
+          if (dr * dr + dg * dg + db * db < 144) keep[b] = false; // RGB 距离 < 12
+        }
+      }
+      centers = centers.filter((_, c) => keep[c]);
+    }
+    // 最终调色板 + 索引（最近格心；透明像素单独索引）
+    const palette = centers.map((c) => [c[0], c[1], c[2], 255]);
+    const indices = new Uint8Array(n);
+    for (const i of opaque) {
+      let best = 0, bestD = Infinity;
+      for (let c = 0; c < palette.length; c++) {
+        const dr = rgba[i * 4] - palette[c][0], dg = rgba[i * 4 + 1] - palette[c][1], db = rgba[i * 4 + 2] - palette[c][2];
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      indices[i] = best;
     }
     if (hasAlpha) {
       const tIdx = palette.length;
@@ -278,7 +325,7 @@
   })();
   function ditherIndices(rgba, palette, w, h) {
     const n = w * h;
-    const strength = 255 / Math.max(2, palette.length); // 扰动幅度随色数缩小
+    const strength = 255 / Math.max(2, palette.length) * 0.5; // 随色数缩小；×0.5 颗粒温和（色带仍有效打破）
     const indices = new Uint8Array(n);
     const nearest = (r, g, b) => {
       let best = 0, bestD = Infinity;

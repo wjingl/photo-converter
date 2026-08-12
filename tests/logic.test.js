@@ -590,3 +590,52 @@ test('ditherIndices: 打破色带——抖动后同索引连续段显著变短�
   assert.ok(ditherRun < plainRun * 0.75,
     `抖动应显著缩短连续段：plain=${plainRun.toFixed(2)}px dither=${ditherRun.toFixed(2)}px`);
 });
+
+// ---------- quantize v2（k-means 细化 + 重复格心合并）----------
+test('quantize: 鲜艳色保留（k-means 细化后纯红/绿/蓝格心存在）', () => {
+  const w = 96, h = 64;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      let r, g, b;
+      if (y < 8) { // 鲜艳色带
+        if (x < 30) { r = 255; g = 0; b = 0; }
+        else if (x < 50) { r = 0; g = 255; b = 0; }
+        else { r = 0; g = 0; b = 255; }
+      } else {
+        const v = 60 + (x / w) * 140 + (y / h) * 40;
+        r = v; g = Math.round(v * 0.7); b = 255 - v;
+      }
+      rgba[i] = r; rgba[i + 1] = g; rgba[i + 2] = b; rgba[i + 3] = 255;
+    }
+  }
+  const { palette } = PI.quantize(rgba, 16);
+  const near = (p, t) => Math.hypot(p[0] - t[0], p[1] - t[1], p[2] - t[2]) < 60;
+  assert.ok(palette.some((p) => near(p, [255, 0, 0])), '应保留纯红格心');
+  assert.ok(palette.some((p) => near(p, [0, 255, 0])), '应保留纯绿格心');
+  assert.ok(palette.some((p) => near(p, [0, 0, 255])), '应保留纯蓝格心');
+});
+
+test('quantize: 合并近重复格心（调色板两两距离 ≥ 12）', () => {
+  const w = 64, h = 48;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (y < 6) { rgba[i] = 0; rgba[i + 1] = 255; rgba[i + 2] = 0; } // 纯绿带
+      else {
+        const v = 60 + (x / w) * 140;
+        rgba[i] = v; rgba[i + 1] = Math.round(v * 0.7); rgba[i + 2] = 255 - v;
+      }
+      rgba[i + 3] = 255;
+    }
+  }
+  const { palette } = PI.quantize(rgba, 16);
+  for (let a = 0; a < palette.length; a++) {
+    for (let b = a + 1; b < palette.length; b++) {
+      const d = Math.hypot(palette[a][0] - palette[b][0], palette[a][1] - palette[b][1], palette[a][2] - palette[b][2]);
+      assert.ok(d >= 12, `格心 ${a}=[${palette[a]}] 与 ${b}=[${palette[b]}] 距离 ${d.toFixed(1)} < 12 未合并`);
+    }
+  }
+});
