@@ -577,6 +577,33 @@ const DRIVER = `
         } else {
           report(false, '小一寸输出 64×89px（无完成行可预览）');
         }
+        // 高级设置仍可选：色数强制 8 色重转 → 照片类（最大行）输出应显著小于 32 色
+        // （低熵图在 8/32 色下大小几乎一致，用最大值对比避免被稀释）
+        const maxKB = (rows) => {
+          const vals = rows
+            .filter((r) => r.querySelector('.status').textContent === '完成')
+            .map((r) => parseKB(r.querySelector('.result').textContent))
+            .filter(isFinite);
+          return vals.length ? Math.max(...vals) : NaN;
+        };
+        const max32 = maxKB([...document.querySelectorAll('.file-row')]);
+        const modeSel2 = document.querySelector('#colorModeSelect');
+        modeSel2.value = '8';
+        modeSel2.dispatchEvent(new Event('change', { bubbles: true }));
+        document.querySelector('#btnReconvert').click();
+        const finished2 = await waitUntil(
+          () => {
+            const sts = document.querySelectorAll('.file-row .status');
+            return sts.length > 0 && Array.from(sts).every((s) => s.textContent === '完成' || s.textContent === '失败');
+          },
+          180000, '小一寸 8 色重转'
+        );
+        const max8 = maxKB([...document.querySelectorAll('.file-row')]);
+        report(!!finished2, '小一寸 8 色重转完成（finished2=' + finished2 + '）');
+        report(isFinite(max32) && isFinite(max8) && max8 < max32 * 0.85,
+          '小一寸模式色数档位生效（32 色最大 ' + max32.toFixed(1) + 'KB → 8 色最大 ' + max8.toFixed(1) + 'KB）');
+        modeSel2.value = 'auto';
+        modeSel2.dispatchEvent(new Event('change', { bubbles: true }));
         idToggle.checked = false;
         idToggle.dispatchEvent(new Event('change', { bubbles: true }));
         report(!document.querySelector('#targetKB').disabled, '取消勾选：目标大小恢复可用');

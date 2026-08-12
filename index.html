@@ -2914,7 +2914,8 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
   // ---------- 小一寸模式：固定 64×89 像素（物理 2.2×3.2cm），忽略目标大小 ----------
   // 高级设置（饱和度/抖动/色数）手动档优先，自动档按固定 32 色语境
   async function convertOneFixed(item, src, sw, sh, progress) {
-    const s = currentSettings();
+    // 注意：用原始 settings（currentSettings 返回派生值，不含 colorMode/satMode/ditherMode）
+    const s = state.settings;
     const colors = s.colorMode === 'auto' ? 32 : s.colorMode === 'full' ? 0 : parseInt(s.colorMode, 10) || 32;
     const satBoost = s.satMode === 'auto'
       ? (colors === 8 ? 0.25 : colors === 16 ? 0.22 : colors === 32 ? 0.12 : 0)
