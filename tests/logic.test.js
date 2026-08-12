@@ -520,3 +520,23 @@ test('boxBlur: 噪声区域方差下降（像素更平滑），遍数越多越�
   assert.ok(once < before, `1 遍后方差应下降：${before} -> ${once}`);
   assert.ok(twice < once, `2 遍比 1 遍更平滑：${once} -> ${twice}`);
 });
+
+test('encodePng palette: 同像素下量化编码显著小于全彩（压缩收益）', async () => {
+  const w = 48, h = 48;
+  // 模拟照片：平滑渐变 + 噪声（含透明像素）
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const base = Math.round(60 + (x + y) * 1.6 + (rnd() - 0.5) * 30);
+      rgba[i] = base; rgba[i + 1] = Math.round(base * 0.8); rgba[i + 2] = 255 - base;
+      rgba[i + 3] = (x + y) % 7 === 0 ? 100 : 255; // 部分透明
+    }
+  }
+  const rgb = await PI.encodePng({ width: w, height: h, rgba, mode: 'rgb', phys: 300 });
+  const { palette, indices } = PI.quantize(rgba, 8);
+  const pal = await PI.encodePng({ width: w, height: h, rgba, indices, palette, mode: 'palette', phys: 300 });
+  assert.ok(pal.length < rgb.length * 0.7, `量化应显著更小：palette=${pal.length} vs rgb=${rgb.length}`);
+});
