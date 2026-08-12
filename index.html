@@ -855,6 +855,17 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     return rgba;
   }
 
+  // ---------- 压缩包格式识别（magic bytes）----------
+  function detectArchiveFormat(bytes) {
+    if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4B &&
+        (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07)) return 'ZIP';
+    if (bytes.length >= 7 && bytes[0] === 0x52 && bytes[1] === 0x61 && bytes[2] === 0x72 && bytes[3] === 0x21) return 'RAR';
+    if (bytes.length >= 6 && bytes[0] === 0x37 && bytes[1] === 0x7A && bytes[2] === 0xBC && bytes[3] === 0xAF) return '7z';
+    if (bytes.length >= 2 && bytes[0] === 0x1F && bytes[1] === 0x8B) return 'GZIP';
+    if (bytes.length >= 262 && bytes[257] === 0x75 && bytes[258] === 0x73 && bytes[259] === 0x74 && bytes[260] === 0x61 && bytes[261] === 0x72) return 'TAR';
+    return null;
+  }
+
   // ---------- ZIP 解析（与 buildZip 对称；原生 DecompressionStream 解压）----------
   // 单条目上限 512MB（防压缩炸弹）；onProgress(已解析/总数) 供上传进度条
   async function parseZip(bytes, onProgress) {
@@ -1045,7 +1056,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     return out;
   }
 
-  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, parseZip, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
 });
 </script>
 <script>'use strict';
@@ -1264,6 +1275,11 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       let entries;
+      const fmt = PI.detectArchiveFormat(bytes);
+      if (fmt && fmt !== 'ZIP') {
+        showPageError('检测到 ' + fmt + ' 格式压缩包，当前版本仅支持 ZIP——请用系统工具将其转换为 ZIP 后上传');
+        return;
+      }
       try {
         entries = await PI.parseZip(bytes, (i, total) => {
           if (importFill) importFill.style.width = Math.round(total ? (i / total) * 100 : 0) + '%';

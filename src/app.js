@@ -214,6 +214,11 @@
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       let entries;
+      const fmt = PI.detectArchiveFormat(bytes);
+      if (fmt && fmt !== 'ZIP') {
+        showPageError('检测到 ' + fmt + ' 格式压缩包，当前版本仅支持 ZIP——请用系统工具将其转换为 ZIP 后上传');
+        return;
+      }
       try {
         entries = await PI.parseZip(bytes, (i, total) => {
           if (importFill) importFill.style.width = Math.round(total ? (i / total) * 100 : 0) + '%';

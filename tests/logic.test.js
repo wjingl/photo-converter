@@ -308,6 +308,22 @@ test('parseZip: 条目超过 512MB 上限抛错', async () => {
   await assert.rejects(() => PI.parseZip(bytes), /512MB/);
 });
 
+// ---------- 压缩包格式识别 ----------
+test('detectArchiveFormat: 常见格式 magic bytes', () => {
+  const zip = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 1, 2, 3]);
+  assert.strictEqual(PI.detectArchiveFormat(zip), 'ZIP');
+  const rar = new Uint8Array([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
+  assert.strictEqual(PI.detectArchiveFormat(rar), 'RAR');
+  const seven = new Uint8Array([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]);
+  assert.strictEqual(PI.detectArchiveFormat(seven), '7z');
+  const gz = new Uint8Array([0x1F, 0x8B, 0x08, 0x00]);
+  assert.strictEqual(PI.detectArchiveFormat(gz), 'GZIP');
+  const tar = new Uint8Array(300);
+  tar[257] = 0x75; tar[258] = 0x73; tar[259] = 0x74; tar[260] = 0x61; tar[261] = 0x72;
+  assert.strictEqual(PI.detectArchiveFormat(tar), 'TAR');
+  assert.strictEqual(PI.detectArchiveFormat(new Uint8Array([1, 2, 3, 4])), null);
+});
+
 // ---------- 像素密度元数据 ----------
 test('setJpegDensity: 已有 APP0 时改写 density', () => {
   // 构造最小 JPEG：SOI + JFIF APP0（density=72）+ EOI

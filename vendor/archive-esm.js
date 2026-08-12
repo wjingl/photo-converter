@@ -1,4 +1,4 @@
-const __AW_WASM_B64 = ""; function __awDecode(b64){const bin=atob(b64);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return u8.buffer;} var wasmBinary = __awDecode(__AW_WASM_B64);
+const __AW_WASM_B64 = ""; var wasmBinary = null; var wasmBinaryFile = "libarchive.wasm"; function __awDecode(b64){const bin=atob(b64);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return u8.buffer;} wasmBinary = __awDecode(__AW_WASM_B64); function __awFetch(url, opts){ if (typeof url === "string" && url.indexOf("data:") === 0) return globalThis["fetch"](url, opts); throw new Error("offline"); }
 
 // package/src/path.mjs
 var CHAR_DOT = 46;
