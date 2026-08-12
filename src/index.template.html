@@ -34,8 +34,8 @@
     <summary>输出设置</summary>
     <div class="settings-grid">
       <label class="field">目标大小
-        <input type="number" id="targetKB" min="30" max="2048" step="1" value="100">
-        <span class="unit">KB（30 – 2048）</span>
+        <input type="number" id="targetKB" min="1" max="2048" step="1" value="100">
+        <span class="unit">KB（1 – 2048）</span>
       </label>
       <label class="field">输出尺寸（物理）
         <div class="dim-row">
@@ -67,7 +67,7 @@
       </label>
       <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化）</label>
     </div>
-    <p class="hint">所有输出图片的物理尺寸严格一致（如上所设）。像素精度（DPI）由目标大小实时演算：系统为每张图确定恰好能承载目标大小的像素密度（低熵图自动提高 DPI，高熵图保持适当 DPI），物理尺寸不变，只调整像素。DPI 已写入文件元数据（JPEG JFIF / PNG pHYs）。裁剪规则：过宽图居中裁左右；过高图按 3:7 裁上下（上 30% / 下 70%）。</p>
+    <p class="hint">所有输出图片的物理尺寸严格一致（如上所设）。像素精度（DPI）由目标大小实时演算：系统为每张图确定恰好能承载目标大小的像素密度（低熵图自动提高 DPI，高熵图保持适当 DPI），物理尺寸不变，只调整像素。DPI 已写入文件元数据（JPEG JFIF / PNG pHYs）。裁剪规则：过宽图居中裁左右；过高图按 3:7 裁上下（上 30% / 下 70%）。目标 ≤8KB 时大小容差自动放宽至 ±12%；PNG 小目标为无损尽力而为（内容受限时输出最大可达）。</p>
   </details>
 
   <!-- 列表 -->
@@ -89,6 +89,7 @@
       <button type="button" class="btn" id="btnCancel" disabled>取消</button>
       <button type="button" class="btn" id="btnReconvert" disabled>重新转换</button>
       <button type="button" class="btn accent" id="btnExportZip" disabled>下载 ZIP</button>
+      <button type="button" class="btn" id="btnDownloadAll" disabled title="直接逐张下载全部转换后的图片（跳过失败项；首次会弹一次多文件下载确认）">下载全部</button>
       <label class="tree-toggle" title="勾选：ZIP 内还原导入时的文件夹结构；取消：全部文件平铺在一起">
         <input type="checkbox" id="keepTree" checked> 保留文件夹结构
       </label>
