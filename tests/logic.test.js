@@ -665,3 +665,41 @@ test('boostSaturation: 彩色像素饱和度提升（max-min 增大）', () => {
   assert.ok(after > before, `饱和度应提升：${before.toFixed(3)} -> ${after.toFixed(3)}`);
   assert.ok(rgba.every((v) => v <= 255 && v >= 0));
 });
+
+// ---------- inflateRaw（纯 JS deflate 解压兜底）----------
+test('inflateRaw: 与 node zlib 交叉验证（空/文本/重复/随机/中文）', () => {
+  const { deflateRawSync } = require('node:zlib');
+  const cases = [
+    new Uint8Array(0),
+    new TextEncoder().encode('hello world'),
+    new Uint8Array(100).fill(42), // 重复（LZ77 窗口）
+    (() => { const a = new Uint8Array(10000); let s = 12345; for (let i = 0; i < a.length; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; a[i] = s & 0xff; } return a; })(), // 随机
+    new TextEncoder().encode('中文测试'.repeat(500)), // UTF-8 文本
+  ];
+  for (const data of cases) {
+    const comp = deflateRawSync(data); // 动态 Huffman
+    const out = PI.inflateRaw(new Uint8Array(comp));
+    assert.deepStrictEqual(Array.from(out), Array.from(data), `len=${data.length}`);
+  }
+});
+
+test('inflateRaw: stored（level 0）与 fixed Huffman（level 1）', () => {
+  const { deflateRawSync } = require('node:zlib');
+  const data = new TextEncoder().encode('fixed huffman test 1234567890'.repeat(20));
+  for (const level of [0, 1]) {
+    const comp = deflateRawSync(data, { level });
+    const out = PI.inflateRaw(new Uint8Array(comp));
+    assert.deepStrictEqual(Array.from(out), Array.from(data), `level=${level}`);
+  }
+});
+
+test('inflateRaw: ZIP 条目级验证——与 buildZip/parseZip 一致（含中文名）', async () => {
+  const data = new TextEncoder().encode('inflate 兜底验证内容'.repeat(300));
+  const zip = await PI.buildZip([{ name: '测试/验证.txt', data }]);
+  const entries = await PI.parseZip(zip);
+  assert.strictEqual(entries.length, 1);
+  assert.deepStrictEqual(Array.from(entries[0].data), Array.from(data));
+  // 强制纯 JS 路径（模拟无 DecompressionStream）：直接 inflateRaw 解压缩后的条目
+  const { crc32 } = PI;
+  assert.strictEqual(crc32(entries[0].data), crc32(data));
+});

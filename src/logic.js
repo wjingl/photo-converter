@@ -419,7 +419,137 @@
     return null;
   }
 
-  // ---------- ZIP 解析（与 buildZip 对称；原生 DecompressionStream 解压）----------
+  // ---------- 纯 JS raw deflate 解压（DecompressionStream 缺失时兜底，仅 ZIP 导入用）----------
+  // 规范 Huffman 直查表（15 位宽，~128KB/表）+ LZ77 窗口复制。支持 stored / fixed / 动态 三种 block。
+  function buildHuffman(lengths) {
+    const MAX_BITS = 15;
+    const count = new Uint16Array(MAX_BITS + 1);
+    for (let i = 0; i < lengths.length; i++) if (lengths[i] > 0) count[lengths[i]]++;
+    // 规范 Huffman 码：位长 b 的第一个码 = (位长 b-1 的第一个码 + 位长 b-1 的符号数) << 1
+    const nextCode = new Uint16Array(MAX_BITS + 1);
+    let code = 0;
+    for (let b = 1; b <= MAX_BITS; b++) {
+      code = (code + count[b - 1]) << 1;
+      nextCode[b] = code;
+    }
+    const table = new Int32Array(1 << MAX_BITS).fill(-1);
+    for (let sym = 0; sym < lengths.length; sym++) {
+      const len = lengths[sym];
+      if (!len) continue;
+      const code = nextCode[len]++;
+      const base = code << (MAX_BITS - len);
+      const step = 1 << (MAX_BITS - len);
+      const val = (sym << 4) | len; // 高位符号 + 低 4 位码长（回退多余位用）
+      for (let k = 0; k < step; k++) table[base | k] = val;
+    }
+    return table;
+  }
+
+  function inflateRaw(input) {
+    const LENGTH_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+    const LENGTH_EXTRA = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+    const DIST_BASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+    const DIST_EXTRA = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+    const ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+    const FIXED_LIT = new Uint8Array(288);
+    for (let i = 0; i < 144; i++) FIXED_LIT[i] = 8;
+    for (let i = 144; i < 256; i++) FIXED_LIT[i] = 9;
+    for (let i = 256; i < 280; i++) FIXED_LIT[i] = 7;
+    for (let i = 280; i < 288; i++) FIXED_LIT[i] = 8;
+    const FIXED_DIST = new Uint8Array(32).fill(5);
+
+    let pos = 0; // 位位置
+    const readBits = (n) => {
+      let v = 0;
+      for (let i = 0; i < n; i++) {
+        if ((pos >> 3) >= input.length) throw new Error('解压数据意外结束');
+        v |= ((input[pos >> 3] >> (pos & 7)) & 1) << i;
+        pos++;
+      }
+      return v;
+    };
+    const decodeSym = (table) => {
+      // Huffman 码 MSB-first：读满 15 位一次查表，按码长回退多余位
+      // （直查表展开的前缀区域会与更长码重叠，逐位提前退出会误命中——必须读满再回退）
+      // 流末尾越界位补 0：最后一个符号（块结束码）之后无更多数据，补 0 展开必命中自身
+      let code = 0;
+      for (let i = 0; i < 15; i++) {
+        const byte = pos >> 3;
+        const bit = byte < input.length ? (input[byte] >> (pos & 7)) & 1 : 0;
+        code = (code << 1) | bit;
+        pos++;
+      }
+      const val = table[code];
+      if (val < 0) throw new Error('Huffman 解码失败');
+      pos -= 15 - (val & 15); // 回退多余位（码长 < 15 时）
+      return val >> 4;
+    };
+    const out = [];
+    let done = false;
+    while (!done) {
+      const bfinal = readBits(1);
+      const btype = readBits(2);
+      if (btype === 0) {
+        // stored：字节对齐 + LEN + NLEN + 原样数据（无 Huffman，跳过符号流）
+        pos = (pos + 7) & ~7;
+        const len = readBits(16);
+        readBits(16); // NLEN（校验用，忽略）
+        const byteStart = pos >> 3;
+        for (let i = 0; i < len; i++) out.push(input[byteStart + i]);
+        pos += len * 8;
+      } else {
+        let litTable, distTable;
+        if (btype === 1) {
+          litTable = buildHuffman(FIXED_LIT);
+          distTable = buildHuffman(FIXED_DIST);
+        } else if (btype === 2) {
+          const hlit = readBits(5) + 257;
+          const hdist = readBits(5) + 1;
+          const hclen = readBits(4) + 4;
+          const codeLens = new Uint8Array(19);
+          for (let i = 0; i < hclen; i++) codeLens[ORDER[i]] = readBits(3);
+          const codeTable = buildHuffman(codeLens);
+          const allLens = [];
+          while (allLens.length < hlit + hdist) {
+            const sym = decodeSym(codeTable);
+            if (sym < 16) allLens.push(sym);
+            else if (sym === 16) {
+              const rep = readBits(2) + 3;
+              const prev = allLens[allLens.length - 1] || 0;
+              for (let i = 0; i < rep; i++) allLens.push(prev);
+            } else if (sym === 17) {
+              const rep = readBits(3) + 3;
+              for (let i = 0; i < rep; i++) allLens.push(0);
+            } else {
+              const rep = readBits(7) + 11;
+              for (let i = 0; i < rep; i++) allLens.push(0);
+            }
+          }
+          litTable = buildHuffman(allLens.slice(0, hlit));
+          distTable = buildHuffman(allLens.slice(hlit));
+        } else {
+          throw new Error('无效 deflate block 类型');
+        }
+        // 符号流：literal 输出 / length+dist 窗口复制
+        for (;;) {
+          const sym = decodeSym(litTable);
+          if (sym < 256) { out.push(sym); continue; }
+          if (sym === 256) break; // 块结束
+          const li = sym - 257;
+          if (li >= 29) throw new Error('无效 length 码');
+          const length = LENGTH_BASE[li] + readBits(LENGTH_EXTRA[li]);
+          const di = decodeSym(distTable);
+          if (di >= 30) throw new Error('无效 distance 码');
+          const dist = DIST_BASE[di] + readBits(DIST_EXTRA[di]);
+          for (let i = 0; i < length; i++) out.push(out[out.length - dist]);
+        }
+      }
+      if (bfinal) done = true;
+    }
+    return new Uint8Array(out);
+  }
+
+  // ---------- ZIP 解析（与 buildZip 对称；原生 DecompressionStream 解压，缺失时纯 JS inflate 兜底）----------
   // 单条目上限 512MB（防压缩炸弹）；onProgress(已解析/总数) 供上传进度条
   async function parseZip(bytes, onProgress) {
     const MAX_ENTRY = 512 * 1024 * 1024;
@@ -457,7 +587,7 @@
       const comp = bytes.subarray(dataStart, dataStart + csize);
       // 4) 解压（method 8 deflate / 0 store；60s 超时防挂起）
       let raw;
-      if (method === 8) {
+      if (method === 8 && typeof DecompressionStream !== 'undefined') {
         const ds = new DecompressionStream('deflate-raw');
         const writer = ds.writable.getWriter();
         writer.write(comp);
@@ -476,6 +606,8 @@
           readAll,
           new Promise((_, rej) => setTimeout(() => rej(new Error('解压超时（60s）: ' + name)), 60000)),
         ]);
+      } else if (method === 8) {
+        raw = inflateRaw(comp); // 纯 JS 兜底（旧浏览器无 DecompressionStream）
       } else if (method === 0) {
         raw = comp;
       } else {
@@ -609,5 +741,5 @@
     return out;
   }
 
-  return { crc32, encodePng, quantize, ditherIndices, boostSaturation, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, ditherIndices, boostSaturation, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate, inflateRaw };
 });
