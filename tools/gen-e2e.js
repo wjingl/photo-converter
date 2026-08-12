@@ -543,6 +543,47 @@ const DRIVER = `
         await tick(200);
       }
 
+      // 轮 7：小一寸模式（固定 64×89 像素，忽略目标大小，高级设置仍可选）
+      {
+        document.querySelector('#btnClearAll').click();
+        await tick(200);
+        const idToggle = document.querySelector('#idModeToggle');
+        report(!!idToggle, '小一寸模式开关存在');
+        idToggle.checked = true;
+        idToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        report(document.querySelector('#sizeW').value === '2.2' && document.querySelector('#sizeH').value === '3.2',
+          '小一寸勾选：物理尺寸自动设 2.2×3.2cm');
+        report(document.querySelector('#targetKB').disabled, '小一寸勾选：目标大小置灰');
+        const files = await makeFixtureFiles();
+        await importFiles(files);
+        document.querySelector('#btnConvert').click();
+        const finished = await waitUntil(
+          () => {
+            const sts = document.querySelectorAll('.file-row .status');
+            return sts.length > 0 && Array.from(sts).every((s) => s.textContent === '完成' || s.textContent === '失败');
+          },
+          180000, '小一寸转换完成'
+        );
+        report(finished, '小一寸模式：转换全部完成');
+        const okRow = [...document.querySelectorAll('.file-row')].find((r) => r.querySelector('.status').textContent === '完成');
+        const pvBtn = okRow && [...okRow.querySelectorAll('.icon-btn')].find((b) => b.textContent === '预览');
+        if (pvBtn) {
+          pvBtn.click();
+          await tick(300);
+          const meta = document.querySelector('.modal-meta');
+          report(!!meta && /64×89px/.test(meta.textContent), '小一寸输出 64×89px（' + (meta ? meta.textContent : '无') + '）');
+          const close = document.querySelector('.modal-box .btn');
+          if (close) close.click();
+        } else {
+          report(false, '小一寸输出 64×89px（无完成行可预览）');
+        }
+        idToggle.checked = false;
+        idToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        report(!document.querySelector('#targetKB').disabled, '取消勾选：目标大小恢复可用');
+        document.querySelector('#btnClearAll').click();
+        await tick(200);
+      }
+
       // 轮 2：30 KB（落在曲线可命中区，验证二分搜索精确命中）
       await convertRound(30, ['photo-input.jpg'], false);
 

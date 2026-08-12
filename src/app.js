@@ -6,7 +6,7 @@
   const state = {
     items: [],
     settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, theme: 'auto',
-      satMode: 'auto', ditherMode: 'auto', colorMode: 'auto' },
+      satMode: 'auto', ditherMode: 'auto', colorMode: 'auto', idMode: false, idSavedSize: null },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -97,6 +97,8 @@
       // 抖动强度系数：自动档 0.5（255/色数×0.5）；高级设置档位：无 0 / 轻 0.3 / 标准 0.5 / 强 0.8
       ditherFactor: s.ditherMode === 'auto' ? 0.5
         : s.ditherMode === 'off' ? 0 : s.ditherMode === 'light' ? 0.3 : s.ditherMode === 'standard' ? 0.5 : 0.8,
+      // 小一寸模式：固定 64×89 像素，忽略目标大小
+      idMode: !!s.idMode,
     };
   }
 
@@ -578,6 +580,9 @@
     $('#satModeSelect').value = s.satMode || 'auto';
     $('#ditherModeSelect').value = s.ditherMode || 'auto';
     $('#colorModeSelect').value = s.colorMode || 'auto';
+    $('#idModeToggle').checked = !!s.idMode;
+    $('#targetKB').disabled = !!s.idMode; // 小一寸模式忽略目标大小
+    $('#idModeHint').hidden = !s.idMode;
     updatePxHint();
   }
   function bindSettings() {
@@ -592,6 +597,25 @@
     $('#satModeSelect').addEventListener('change', (e) => set('satMode', e.target.value));
     $('#ditherModeSelect').addEventListener('change', (e) => set('ditherMode', e.target.value));
     $('#colorModeSelect').addEventListener('change', (e) => set('colorMode', e.target.value));
+    $('#idModeToggle').addEventListener('change', (e) => {
+      const on = e.target.checked;
+      if (on) {
+        state.settings.idSavedSize = { w: state.settings.sizeW, h: state.settings.sizeH }; // 暂存原尺寸
+        set('sizeW', 2.2);
+        set('sizeH', 3.2);
+        $('#sizeW').value = 2.2; // 同步输入框显示
+        $('#sizeH').value = 3.2;
+      } else if (state.settings.idSavedSize) {
+        set('sizeW', state.settings.idSavedSize.w); // 取消恢复原设置
+        set('sizeH', state.settings.idSavedSize.h);
+        $('#sizeW').value = state.settings.idSavedSize.w;
+        $('#sizeH').value = state.settings.idSavedSize.h;
+      }
+      set('idMode', on);
+      $('#targetKB').disabled = on;
+      $('#idModeHint').hidden = !on;
+      updatePxHint();
+    });
   }
   // 主题：auto 跟随系统（移除 data-theme），显式覆盖亮/暗
   function applyTheme() {
@@ -1010,6 +1034,66 @@
     return /\.png$/i.test(srcName) ? 'png' : 'jpg'; // auto：png 保留，其余转 jpg
   }
 
+  // ---------- 小一寸模式：固定 64×89 像素（物理 2.2×3.2cm），忽略目标大小 ----------
+  // 高级设置（饱和度/抖动/色数）手动档优先，自动档按固定 32 色语境
+  async function convertOneFixed(item, src, sw, sh, progress) {
+    const s = currentSettings();
+    const colors = s.colorMode === 'auto' ? 32 : s.colorMode === 'full' ? 0 : parseInt(s.colorMode, 10) || 32;
+    const satBoost = s.satMode === 'auto'
+      ? (colors === 8 ? 0.25 : colors === 16 ? 0.22 : colors === 32 ? 0.12 : 0)
+      : (s.satMode === 'off' ? 0 : s.satMode === 'light' ? 0.10 : s.satMode === 'standard' ? 0.20 : 0.30);
+    const ditherFactor = s.ditherMode === 'auto' ? 0.5
+      : (s.ditherMode === 'off' ? 0 : s.ditherMode === 'light' ? 0.3 : s.ditherMode === 'standard' ? 0.5 : 0.8);
+    const crop = PI.computeCrop(sw, sh, [64, 89]);
+    const canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, 64, 89);
+    if (typeof src.close === 'function') src.close();
+    progress(40);
+    // 去噪（轻 1 遍，提升压缩率）
+    const dctx = canvas.getContext('2d', { willReadFrequently: true });
+    const dimg = dctx.getImageData(0, 0, 64, 89);
+    PI.boxBlur(dimg.data, 64, 89, 1);
+    if (satBoost > 0) PI.boostSaturation(dimg.data, 64, 89, satBoost);
+    dctx.putImageData(dimg, 0, 0);
+    // 压缩后锐化（源 > 64×89 才发生）
+    const ratio = Math.max(sw, sh) / 89;
+    if (ratio > 1) lightSharpen(canvas, ratio > 4 ? 0.5 : ratio > 2 ? 0.45 : 0.4);
+    progress(60);
+    const physDpi = dpiFromPx(89, 3.2); // 小一寸物理 2.2×3.2cm
+    const ext = extFor(s, item.name);
+    if (ext === 'png') {
+      const rgba = dimg.data;
+      let bytes;
+      if (colors > 0) {
+        const q = PI.quantize(rgba, colors);
+        const indices = ditherFactor > 0 ? PI.ditherIndices(rgba, q.palette, 64, 89, ditherFactor) : q.indices;
+        bytes = await PI.encodePng({ width: 64, height: 89, rgba, indices, palette: q.palette, mode: 'palette', phys: physDpi });
+      } else {
+        let hasAlpha = false;
+        for (let i = 3; i < rgba.length; i += 4) { if (rgba[i] !== 255) { hasAlpha = true; break; } }
+        bytes = await PI.encodePng({ width: 64, height: 89, rgba, mode: hasAlpha ? 'rgba' : 'rgb', phys: physDpi });
+        const oxiBytes = await encodePngOxipng(rgba, 64, 89);
+        if (oxiBytes && oxiBytes.length <= bytes.length) bytes = insertPngPhys(oxiBytes, physDpi);
+      }
+      item.resultBlob = new Blob([bytes], { type: 'image/png' });
+    } else {
+      // JPEG：mozjpeg q85 高质量直出（无目标演算）
+      let outBytes = await encodeJpegMoz(dimg.data, 64, 89, 85);
+      if (!outBytes) {
+        const b = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+        outBytes = new Uint8Array(await b.arrayBuffer());
+      }
+      item.resultBlob = new Blob([PI.setJpegDensity(outBytes, physDpi)], { type: 'image/jpeg' });
+    }
+    item.outPxW = 64;
+    item.outPxH = 89;
+    item.outDpi = physDpi;
+    item.resultSize = item.resultBlob.size;
+    item.outName = item.name.replace(/\.[^.]+$/, '') + '.' + (ext === 'png' ? 'png' : 'jpg');
+    item.note = '小一寸 64×89';
+    item.status = 'done';
+    progress(100);
+  }
+
   // 单张转换（带行级进度回调）：解码 5→20% → 缩放 30% → 增强 40% → 编码 40→95% → 100%
   async function convertOne(item, onProgress) {
     const s = currentSettings();
@@ -1018,6 +1102,10 @@
     const src = await loadBitmap(item.file);
     progress(20);
     const { w: sw, h: sh } = srcDims(src);
+    if (s.idMode) {
+      await convertOneFixed(item, src, sw, sh, progress);
+      return;
+    }
     const crop = PI.computeCrop(sw, sh, [s.baseW, s.baseH]);
     // 画布 = 源裁剪尺寸：绝不无故缩小源（缩小 = 丢细节）；分辨率取舍交给编码器
     let canvas = drawCanvas(src, crop.x, crop.y, crop.w, crop.h, crop.w, crop.h);
