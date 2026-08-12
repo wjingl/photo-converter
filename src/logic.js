@@ -301,7 +301,7 @@
       const lExtraLen = dv.getUint16(localOff + 28, true);
       const dataStart = localOff + 30 + lNameLen + lExtraLen;
       const comp = bytes.subarray(dataStart, dataStart + csize);
-      // 4) 解压（method 8 deflate / 0 store）
+      // 4) 解压（method 8 deflate / 0 store；60s 超时防挂起）
       let raw;
       if (method === 8) {
         const ds = new DecompressionStream('deflate-raw');
@@ -310,11 +310,18 @@
         writer.close();
         const reader = ds.readable.getReader();
         const parts = [];
-        for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
-        const total = parts.reduce((n, p) => n + p.length, 0);
-        raw = new Uint8Array(total);
-        let o = 0;
-        for (const p of parts) { raw.set(p, o); o += p.length; }
+        const readAll = (async () => {
+          for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
+          const total = parts.reduce((n, p) => n + p.length, 0);
+          const out = new Uint8Array(total);
+          let o = 0;
+          for (const p of parts) { out.set(p, o); o += p.length; }
+          return out;
+        })();
+        raw = await Promise.race([
+          readAll,
+          new Promise((_, rej) => setTimeout(() => rej(new Error('解压超时（60s）: ' + name)), 60000)),
+        ]);
       } else if (method === 0) {
         raw = comp;
       } else {

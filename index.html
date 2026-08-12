@@ -178,13 +178,13 @@ details#settingsPanel > summary { cursor: pointer; padding: 12px 16px; font-weig
   <section id="dropZone" tabindex="0" role="button" aria-label="拖入图片或文件夹">
     <div class="drop-icon">⬆</div>
     <p class="drop-title">拖入图片或文件夹到此处</p>
-    <p class="drop-sub">或点击下方按钮选择 · 支持压缩包上传（保留文件夹结构）</p>
+    <p class="drop-sub">或点击下方按钮选择 · 支持 ZIP 压缩包上传（保留文件夹结构）</p>
     <div class="drop-actions">
       <button type="button" class="btn primary" id="btnPickFiles">选择图片</button>
       <button type="button" class="btn" id="btnPickZip">上传压缩包</button>
     </div>
     <input type="file" id="fileInput" multiple accept="image/*" class="visually-hidden">
-    <input type="file" id="zipInput" accept=".zip,application/zip" class="visually-hidden">
+    <input type="file" id="zipInput" accept=".zip" class="visually-hidden">
   </section>
 
   <!-- 设置 -->
@@ -891,7 +891,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       const lExtraLen = dv.getUint16(localOff + 28, true);
       const dataStart = localOff + 30 + lNameLen + lExtraLen;
       const comp = bytes.subarray(dataStart, dataStart + csize);
-      // 4) 解压（method 8 deflate / 0 store）
+      // 4) 解压（method 8 deflate / 0 store；60s 超时防挂起）
       let raw;
       if (method === 8) {
         const ds = new DecompressionStream('deflate-raw');
@@ -900,11 +900,18 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
         writer.close();
         const reader = ds.readable.getReader();
         const parts = [];
-        for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
-        const total = parts.reduce((n, p) => n + p.length, 0);
-        raw = new Uint8Array(total);
-        let o = 0;
-        for (const p of parts) { raw.set(p, o); o += p.length; }
+        const readAll = (async () => {
+          for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
+          const total = parts.reduce((n, p) => n + p.length, 0);
+          const out = new Uint8Array(total);
+          let o = 0;
+          for (const p of parts) { out.set(p, o); o += p.length; }
+          return out;
+        })();
+        raw = await Promise.race([
+          readAll,
+          new Promise((_, rej) => setTimeout(() => rej(new Error('解压超时（60s）: ' + name)), 60000)),
+        ]);
       } else if (method === 0) {
         raw = comp;
       } else {
@@ -1242,11 +1249,12 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
         if (importFill) importFill.style.width = Math.round(total ? (i / total) * 100 : 0) + '%';
       }); // ZIP 解析（含密码检测与 CRC 校验）
     } catch (e) {
+      if (importWrap) importWrap.hidden = true; // 异常路径也必须收进度条
       const msg = String(e && e.message || e);
       if (/password|encrypted|password protected/i.test(msg)) {
         showPageError('压缩包含密码保护，暂不支持（请先解压去除密码后再上传）');
       } else {
-        showPageError('压缩包解析失败：' + msg.slice(0, 160));
+        showPageError('压缩包解析失败：' + msg.slice(0, 160) + '（当前仅支持 ZIP 格式）');
       }
       return;
     }

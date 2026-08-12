@@ -200,11 +200,12 @@
         if (importFill) importFill.style.width = Math.round(total ? (i / total) * 100 : 0) + '%';
       }); // ZIP 解析（含密码检测与 CRC 校验）
     } catch (e) {
+      if (importWrap) importWrap.hidden = true; // 异常路径也必须收进度条
       const msg = String(e && e.message || e);
       if (/password|encrypted|password protected/i.test(msg)) {
         showPageError('压缩包含密码保护，暂不支持（请先解压去除密码后再上传）');
       } else {
-        showPageError('压缩包解析失败：' + msg.slice(0, 160));
+        showPageError('压缩包解析失败：' + msg.slice(0, 160) + '（当前仅支持 ZIP 格式）');
       }
       return;
     }
