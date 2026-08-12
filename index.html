@@ -941,6 +941,25 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     return indices;
   }
 
+  // ---------- 饱和增强 ----------
+  // RGB 向亮度拉伸：l=(r+g+b)/3，c' = clamp(l + (c-l)×(1+amount))。
+  // 灰度（r=g=b）与纯黑/纯白不变；彩色像素饱和度提升——补偿压缩（去噪/量化/
+  // JPEG 色度下采样）造成的发灰。确定性，原地修改。
+  function boostSaturation(rgba, w, h, amount) {
+    const k = 1 + amount;
+    for (let i = 0; i < w * h * 4; i += 4) {
+      const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+      const l = (r + g + b) / 3;
+      const nr = Math.round(l + (r - l) * k);
+      const ng = Math.round(l + (g - l) * k);
+      const nb = Math.round(l + (b - l) * k);
+      rgba[i] = nr < 0 ? 0 : nr > 255 ? 255 : nr;
+      rgba[i + 1] = ng < 0 ? 0 : ng > 255 ? 255 : ng;
+      rgba[i + 2] = nb < 0 ? 0 : nb > 255 ? 255 : nb;
+    }
+    return rgba;
+  }
+
   // ---------- 反锐化掩模（盒式模糊近似高斯 + 增强）----------
   function unsharpMask(rgba, w, h, radius = 1, amount = 0.6) {
     const n = w * h;
@@ -1181,7 +1200,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     return out;
   }
 
-  return { crc32, encodePng, quantize, ditherIndices, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, ditherIndices, boostSaturation, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
 });
 </script>
 <script>'use strict';
@@ -1252,6 +1271,9 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       // 小目标自动调色板量化（≤2KB 8 色、≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损）：
       // 降色彩精度换像素密度——1KB 照片可到 ~48px（全彩仅 ~23px）
       paletteColors: s.targetKB <= 2 ? 8 : s.targetKB <= 4 ? 16 : s.targetKB <= 8 ? 32 : 0,
+      // 小目标自动饱和增强（≤2KB +25%、≤8KB +12%、>8KB 不做）：
+      // 补偿压缩（去噪/量化/JPEG 色度下采样）造成的发灰
+      satBoost: s.targetKB <= 2 ? 0.25 : s.targetKB <= 8 ? 0.12 : 0,
     };
   }
 
@@ -2136,6 +2158,13 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
         PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
         dctx.putImageData(dimg, 0, 0);
       }
+      // 小目标自动饱和增强：补偿量化格心平均化造成的发灰（灰度像素不受影响）
+      if (s.satBoost > 0) {
+        const sctx = finalCanvas.getContext('2d', { willReadFrequently: true });
+        const simg = sctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        PI.boostSaturation(simg.data, finalCanvas.width, finalCanvas.height, s.satBoost);
+        sctx.putImageData(simg, 0, 0);
+      }
       // 压缩后锐化（PNG 此前缺失）：缩小才锐化，强度随缩小比例（与 JPEG 路径一致）；
       // 调色板路径跳过——锐化引入颜色跳变会扰乱索引
       if (s.paletteColors === 0 && r.edge < Math.max(cw, ch)) {
@@ -2178,6 +2207,13 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
         const dimg = dctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
         PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
         dctx.putImageData(dimg, 0, 0);
+      }
+      // 小目标自动饱和增强：补偿 q30 + 4:2:0 色度下采样的饱和损失（灰度不受影响）
+      if (s.satBoost > 0) {
+        const sctx = finalCanvas.getContext('2d', { willReadFrequently: true });
+        const simg = sctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        PI.boostSaturation(simg.data, finalCanvas.width, finalCanvas.height, s.satBoost);
+        sctx.putImageData(simg, 0, 0);
       }
       if (r.edge < Math.max(cw, ch)) {
         // 缩小后锐化（缩小才发生）：恢复边缘，抵消缩放软化

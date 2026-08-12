@@ -66,6 +66,9 @@
       // 小目标自动调色板量化（≤2KB 8 色、≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损）：
       // 降色彩精度换像素密度——1KB 照片可到 ~48px（全彩仅 ~23px）
       paletteColors: s.targetKB <= 2 ? 8 : s.targetKB <= 4 ? 16 : s.targetKB <= 8 ? 32 : 0,
+      // 小目标自动饱和增强（≤2KB +25%、≤8KB +12%、>8KB 不做）：
+      // 补偿压缩（去噪/量化/JPEG 色度下采样）造成的发灰
+      satBoost: s.targetKB <= 2 ? 0.25 : s.targetKB <= 8 ? 0.12 : 0,
     };
   }
 
@@ -950,6 +953,13 @@
         PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
         dctx.putImageData(dimg, 0, 0);
       }
+      // 小目标自动饱和增强：补偿量化格心平均化造成的发灰（灰度像素不受影响）
+      if (s.satBoost > 0) {
+        const sctx = finalCanvas.getContext('2d', { willReadFrequently: true });
+        const simg = sctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        PI.boostSaturation(simg.data, finalCanvas.width, finalCanvas.height, s.satBoost);
+        sctx.putImageData(simg, 0, 0);
+      }
       // 压缩后锐化（PNG 此前缺失）：缩小才锐化，强度随缩小比例（与 JPEG 路径一致）；
       // 调色板路径跳过——锐化引入颜色跳变会扰乱索引
       if (s.paletteColors === 0 && r.edge < Math.max(cw, ch)) {
@@ -992,6 +1002,13 @@
         const dimg = dctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
         PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
         dctx.putImageData(dimg, 0, 0);
+      }
+      // 小目标自动饱和增强：补偿 q30 + 4:2:0 色度下采样的饱和损失（灰度不受影响）
+      if (s.satBoost > 0) {
+        const sctx = finalCanvas.getContext('2d', { willReadFrequently: true });
+        const simg = sctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        PI.boostSaturation(simg.data, finalCanvas.width, finalCanvas.height, s.satBoost);
+        sctx.putImageData(simg, 0, 0);
       }
       if (r.edge < Math.max(cw, ch)) {
         // 缩小后锐化（缩小才发生）：恢复边缘，抵消缩放软化
