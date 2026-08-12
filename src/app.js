@@ -272,7 +272,9 @@
         if (/password|encrypted|password protected/i.test(msg)) {
           showPageError('压缩包含密码保护，暂不支持（请先解压去除密码后再上传）');
         } else {
-          showPageError('压缩包解析失败：' + msg.slice(0, 160) + '（当前仅支持 ZIP 格式）');
+          // 诊断加固：附加文件头 hex（帮助定位真实格式——tar.gz/rar 等 Linux 常见格式）
+          const head = Array.from(bytes.slice(0, 16)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+          showPageError('压缩包解析失败：' + msg.slice(0, 120) + '（当前仅支持 ZIP 格式）| 文件头: ' + head);
         }
         return;
       }
@@ -1366,6 +1368,9 @@
     initMozjpeg(); // 后台加载 mozjpeg WASM（转换前就绪）
     if (typeof CompressionStream === 'undefined') {
       $('#btnExportZip').title = '当前浏览器不支持压缩流，ZIP 导出不可用';
+    }
+    if (typeof DecompressionStream === 'undefined') {
+      $('#btnPickZip').title = '当前浏览器不支持解压流（DecompressionStream），压缩包导入不可用';
     }
   }
 
