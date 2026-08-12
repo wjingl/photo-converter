@@ -68,15 +68,23 @@
       <label class="field check"><input type="checkbox" id="enhanceToggle" checked> 增强低清晰度图像（上采样 + 锐化）</label>
       <details id="advancedPanel" class="field">
         <summary>高级设置</summary>
-        <label class="field check">饱和度增强（自动跟随色数）
-          <input type="checkbox" id="satAutoToggle" checked> 自动
-          <input type="range" id="satSlider" min="0" max="50" step="1" value="22" disabled>
-          <span class="unit" id="satVal">22%</span>
+        <label class="field">饱和度增强
+          <select id="satModeSelect">
+            <option value="auto" selected>自动（随色数）</option>
+            <option value="off">无</option>
+            <option value="light">轻（10%）</option>
+            <option value="standard">标准（20%）</option>
+            <option value="strong">强（30%）</option>
+          </select>
         </label>
-        <label class="field check">抖动强度（自动随色数）
-          <input type="checkbox" id="ditherAutoToggle" checked> 自动
-          <input type="range" id="ditherSlider" min="0" max="100" step="5" value="50" disabled>
-          <span class="unit" id="ditherVal">50%</span>
+        <label class="field">抖动强度
+          <select id="ditherModeSelect">
+            <option value="auto" selected>自动（随色数）</option>
+            <option value="off">无</option>
+            <option value="light">轻（30%）</option>
+            <option value="standard">标准（50%）</option>
+            <option value="strong">强（80%）</option>
+          </select>
         </label>
         <label class="field">调色板色数
           <select id="colorModeSelect">

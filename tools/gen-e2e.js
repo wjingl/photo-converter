@@ -78,8 +78,15 @@ const DRIVER = `
       {
         const panel = document.querySelector('#advancedPanel');
         report(!!panel && panel.open === false, '高级设置折叠栏存在且默认收起');
-        report(document.querySelector('#satAutoToggle').checked && document.querySelector('#ditherAutoToggle').checked,
+        report(document.querySelector('#satModeSelect').value === 'auto' && document.querySelector('#ditherModeSelect').value === 'auto',
           '饱和度/抖动默认自动档');
+        const satSel = document.querySelector('#satModeSelect');
+        satSel.value = 'strong';
+        satSel.dispatchEvent(new Event('change', { bubbles: true }));
+        report(window.__piState().settings.satMode === 'strong', '饱和度档位切换为强（钩子生效）');
+        satSel.value = 'auto';
+        satSel.dispatchEvent(new Event('change', { bubbles: true }));
+        report(window.__piState().settings.satMode === 'auto', '饱和度档位恢复自动');
         const modeSel = document.querySelector('#colorModeSelect');
         modeSel.value = '8';
         modeSel.dispatchEvent(new Event('change', { bubbles: true }));
