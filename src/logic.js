@@ -266,7 +266,9 @@
   }
 
   // ---------- ZIP 解析（与 buildZip 对称；原生 DecompressionStream 解压）----------
-  async function parseZip(bytes) {
+  // 单条目上限 512MB（防压缩炸弹）；onProgress(已解析/总数) 供上传进度条
+  async function parseZip(bytes, onProgress) {
+    const MAX_ENTRY = 512 * 1024 * 1024;
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     // 1) 从尾部找 EOCD（签名 0x06054b50）
     let eocd = -1;
@@ -283,6 +285,8 @@
       if (dv.getUint32(off, true) !== 0x02014b50) throw new Error('ZIP 中央目录损坏');
       const flags = dv.getUint16(off + 8, true);
       if (flags & 0x0001) throw new Error('压缩包含密码保护，暂不支持（请先解压去除密码后再上传）');
+      if (dv.getUint32(off + 24, true) > MAX_ENTRY) throw new Error('压缩包条目超过 512MB 上限');
+      if (onProgress) onProgress(e, count);
       const method = dv.getUint16(off + 10, true);
       const crc = dv.getUint32(off + 16, true);
       const csize = dv.getUint32(off + 20, true);

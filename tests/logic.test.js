@@ -282,6 +282,30 @@ test('parseZip: 与 Python zipfile 交叉验证', async () => {
   assert.match(py.stdout, /PYPARSE_OK/);
 });
 
+test('parseZip: onProgress 回调逐步调用', async () => {
+  const zip = await PI.buildZip([
+    { name: 'a.png', data: new Uint8Array(10) },
+    { name: 'b.png', data: new Uint8Array(10) },
+    { name: 'c.png', data: new Uint8Array(10) },
+  ]);
+  let calls = 0;
+  await PI.parseZip(zip, () => { calls++; });
+  assert.strictEqual(calls, 3);
+});
+
+test('parseZip: 条目超过 512MB 上限抛错', async () => {
+  const zip = await PI.buildZip([{ name: 'a.png', data: new Uint8Array(10) }]);
+  const bytes = zip.slice();
+  // 修改 central directory 的 usize 字段（签名后 24 字节偏移处）为 513MB
+  const dv = new DataView(bytes.buffer);
+  // 从尾部找 central dir：EOCD 在末尾 22 字节
+  let eocd = bytes.length - 22;
+  while (dv.getUint32(eocd, true) !== 0x06054b50) eocd--;
+  const cdOff = dv.getUint32(eocd + 16, true);
+  dv.setUint32(cdOff + 24, 513 * 1024 * 1024, true); // usize = 513MB
+  await assert.rejects(() => PI.parseZip(bytes), /512MB/);
+});
+
 // ---------- 像素密度元数据 ----------
 test('setJpegDensity: 已有 APP0 时改写 density', () => {
   // 构造最小 JPEG：SOI + JFIF APP0（density=72）+ EOI

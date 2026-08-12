@@ -72,7 +72,11 @@
 
   <!-- 列表 -->
   <section id="listSection">
-    <div id="listEmpty" class="empty">尚未导入图片 — 拖入、选择图片或选择文件夹</div>
+    <div class="import-progress" id="importProgress" hidden>
+      <span>正在导入压缩包…</span>
+      <div class="progress-wrap"><div class="progress-fill" id="importProgressFill"></div></div>
+    </div>
+    <div id="listEmpty" class="empty">尚未导入图片 — 拖入、选择图片或上传压缩包</div>
     <ul id="fileList" class="file-list"></ul>
   </section>
 

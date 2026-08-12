@@ -178,17 +178,27 @@
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return; // 用户取消
-      showPageError('目录选择器不可用：' + msg.slice(0, 120)); // 不再回退（webkitdirectory 在 file:// 不可靠）
+      showPageError('目录选择器不可用：' + String(e && e.message || e).slice(0, 120)); // 不再回退（webkitdirectory 在 file:// 不可靠）
     }
   }
 
   // 压缩包导入：LibArchive WASM 解压（zip/rar/7z/tar 等多格式）→ 按包内路径导入（保留文件夹结构）
   // 含密码的压缩包 → 抛错提示；解压上限 128MB（防压缩炸弹）
   async function importZipFile(file) {
+    if (file.size > 512 * 1024 * 1024) {
+      showPageError('压缩包超过 512MB 上限');
+      return;
+    }
+    const importWrap = document.getElementById('importProgress');
+    const importFill = document.getElementById('importProgressFill');
+    if (importWrap) importWrap.hidden = false;
+    if (importFill) importFill.style.width = '0%';
     const bytes = new Uint8Array(await file.arrayBuffer());
     let entries;
     try {
-      entries = await PI.parseZip(bytes); // ZIP 解析（含密码检测与 CRC 校验）
+      entries = await PI.parseZip(bytes, (i, total) => {
+        if (importFill) importFill.style.width = Math.round(total ? (i / total) * 100 : 0) + '%';
+      }); // ZIP 解析（含密码检测与 CRC 校验）
     } catch (e) {
       const msg = String(e && e.message || e);
       if (/password|encrypted|password protected/i.test(msg)) {
@@ -210,6 +220,7 @@
       added++;
     }
     refresh();
+    if (importWrap) importWrap.hidden = true;
     if (!added) showPageError('压缩包中没有支持的图片（jpg/png/webp/bmp/gif/avif/svg）');
   }
 
@@ -217,9 +228,13 @@
     $('#btnPickFiles').addEventListener('click', () => $('#fileInput').click());
     // 压缩包上传（替代文件夹选择：file:// 下浏览器文件夹 API 受限，ZIP 上传最可靠）
     $('#btnPickZip').addEventListener('click', () => $('#zipInput').click());
-    $('#zipInput').addEventListener('change', (e) => {
-      if (e.target.files.length) importZipFile(e.target.files[0]);
+    $('#zipInput').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
       e.target.value = '';
+      if (file) {
+        try { await importZipFile(file); }
+        catch (err) { showPageError('导入失败：' + (err && err.message || err)); }
+      }
     });
     const dz = $('#dropZone');
     // 点击拖放区等同「选择图片」（按钮点击不触发）
