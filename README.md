@@ -54,4 +54,4 @@ node tools/gen-fixtures.js        # 重新生成测试图片
 node tools/gen-e2e.js && node tools/e2e-run.js   # 无头浏览器端到端测试
 ```
 
-源文件：`src/logic.js`（纯逻辑引擎）、`src/app.js`（UI/管线）、`src/style.css`、`src/index.template.html`。**零第三方依赖**，全部使用浏览器原生能力（canvas / createImageBitmap / CompressionStream）。
+源文件：`src/logic.js`（纯逻辑引擎）、`src/app.js`（UI/管线）、`src/style.css`、`src/index.template.html`。**零第三方依赖**，全部使用浏览器原生能力（canvas / createImageBitmap / CompressionStream）。转换管线使用 Web Worker 并行（量化/抖动/deflate 编码多核并行，主线程负责解码与缩放；Worker 不可用时自动降级同步）。

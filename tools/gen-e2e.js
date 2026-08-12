@@ -96,6 +96,28 @@ const DRIVER = `
         modeSel.dispatchEvent(new Event('change', { bubbles: true }));
         report(window.__piState().settings.colorMode === 'auto', '色数恢复自动档');
       }
+      // Worker 并行编码：脚本内联存在 + 真实往返（quantize+dither+encodePng 全链路）
+      {
+        const srcEl = document.getElementById('workerSrc');
+        report(!!srcEl && srcEl.textContent.trim().length > 1000,
+          'Worker 脚本内联存在（' + (srcEl ? srcEl.textContent.trim().length : 0) + ' B）');
+        let wRound = '无';
+        try {
+          const src = srcEl.textContent.trim();
+          const blob = new Blob([src], { type: 'text/javascript' });
+          const wkr = new Worker(URL.createObjectURL(blob));
+          wRound = await new Promise((res) => {
+            wkr.onmessage = (e) => res(e.data);
+            const w = 8, h = 8;
+            const rgba = new Uint8ClampedArray(w * h * 4);
+            for (let i = 0; i < rgba.length; i++) rgba[i] = i % 4 === 3 ? 255 : (i * 7) % 256;
+            wkr.postMessage({ id: 1, cmd: 'encode', width: w, height: h, rgba, colors: 8, ditherFactor: 0.5, phys: 300 }, [rgba.buffer]);
+          });
+          wkr.terminate();
+        } catch (e) { wRound = 'ERR:' + String(e).slice(0, 120); }
+        report(!!wRound && wRound.size > 0 && !wRound.error,
+          'Worker 编码往返成功（' + (wRound && wRound.size || 0) + ' B' + (wRound && wRound.error ? ' err=' + wRound.error : '') + '）');
+      }
       // 运行时诊断：readyState / ArchiveWasm / boot 痕迹
       report(document.readyState, 'readyState=' + document.readyState + ' ArchiveWasm=' + typeof window.ArchiveWasm +
         ' themeSelect=' + (document.querySelector('#themeSelect') ? '存在' : '缺失'));
