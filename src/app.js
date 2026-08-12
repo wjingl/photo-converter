@@ -69,9 +69,9 @@
       // 小目标自动调色板量化：≤0.8KB 8 色（极端低色数区间，0.3KB 下 8 色 ~12×12px 可达）、
       // ≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损
       paletteColors,
-      // 饱和增强随色数自适应（色数越少补偿越强）：8 色 0.25、16 色 0.18、32 色 0.12、
+      // 饱和增强随色数自适应（色数越少补偿越强）：8 色 0.25、16 色 0.22、32 色 0.12、
       // 全彩（>50KB）不做；抖动已由 ditherIndices 内建 255/色数 自适应
-      satBoost: paletteColors === 8 ? 0.25 : paletteColors === 16 ? 0.18 : paletteColors === 32 ? 0.12 : 0,
+      satBoost: paletteColors === 8 ? 0.25 : paletteColors === 16 ? 0.22 : paletteColors === 32 ? 0.12 : 0,
     };
   }
 

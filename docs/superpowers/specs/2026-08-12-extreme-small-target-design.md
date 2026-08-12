@@ -44,10 +44,10 @@
 ### D2b 饱和增强随色数自适应
 
 ```
-satBoost = paletteColors === 8 ? 0.25 : paletteColors === 16 ? 0.18 : paletteColors === 32 ? 0.12 : 0
+satBoost = paletteColors === 8 ? 0.25 : paletteColors === 16 ? 0.22 : paletteColors === 32 ? 0.12 : 0
 ```
 
-- 色数越少补偿越强（8 色 0.25 / 16 色 0.18 / 32 色 0.12 / 全彩 0）；
+- 色数越少补偿越强（8 色 0.25 / 16 色 0.22 / 32 色 0.12 / 全彩 0；16 色 0.22 为用户 2026-08-12 调高）；
 - 抖动无需改：`ditherIndices` 的 `255/色数 × 0.5` 已按色数自动缩放。
 
 ### D3 像素下限与性能
