@@ -795,33 +795,56 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     return { palette, indices };
   }
 
-  // ---------- 反锐化掩模（两遍盒式模糊近似高斯 + 增强）----------
-  function unsharpMask(rgba, w, h, radius = 1, amount = 0.6) {
+  // ---------- 盒式模糊内核（3×3 低通：横+纵两半遍 = 一次完整模糊）----------
+  // 结果写入 Float32Array out（unsharpMask 需不减精度中间值；boxBlur 包装写回 Uint8）
+  function blurInto(rgba, w, h, out) {
     const n = w * h;
     const tmp = new Float32Array(n * 3);
-    const blur = new Float32Array(n * 3);
-    for (let pass = 0; pass < 2; pass++) {
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = y * w + x;
-          const x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1);
-          for (let c = 0; c < 3; c++) {
-            const s = rgba[(y * w + x0) * 4 + c] + rgba[i * 4 + c] + rgba[(y * w + x1) * 4 + c];
-            tmp[i * 3 + c] = s / 3;
-          }
-        }
-      }
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = y * w + x;
-          const y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
-          for (let c = 0; c < 3; c++) {
-            const s = tmp[(y0 * w + x) * 3 + c] + tmp[i * 3 + c] + tmp[(y1 * w + x) * 3 + c];
-            blur[i * 3 + c] = s / 3;
-          }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1);
+        for (let c = 0; c < 3; c++) {
+          const s = rgba[(y * w + x0) * 4 + c] + rgba[i * 4 + c] + rgba[(y * w + x1) * 4 + c];
+          tmp[i * 3 + c] = s / 3;
         }
       }
     }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
+        for (let c = 0; c < 3; c++) {
+          const s = tmp[(y0 * w + x) * 3 + c] + tmp[i * 3 + c] + tmp[(y1 * w + x) * 3 + c];
+          out[i * 3 + c] = s / 3;
+        }
+      }
+    }
+    return out;
+  }
+
+  // ---------- 盒式模糊（低通滤波/去噪）----------
+  // 写回 RGB、保留 alpha；passes 为完整模糊遍数（更多遍更平滑）
+  function boxBlur(rgba, w, h, passes = 1) {
+    const n = w * h;
+    const blur = new Float32Array(n * 3);
+    for (let p = 0; p < passes; p++) {
+      blurInto(rgba, w, h, blur);
+      for (let i = 0; i < n * 4; i += 4) {
+        const k = (i / 4) * 3;
+        rgba[i] = Math.round(blur[k]);
+        rgba[i + 1] = Math.round(blur[k + 1]);
+        rgba[i + 2] = Math.round(blur[k + 2]);
+      }
+    }
+    return rgba;
+  }
+
+  // ---------- 反锐化掩模（盒式模糊近似高斯 + 增强）----------
+  function unsharpMask(rgba, w, h, radius = 1, amount = 0.6) {
+    const n = w * h;
+    const blur = new Float32Array(n * 3);
+    blurInto(rgba, w, h, blur);
     for (let i = 0; i < n; i++) {
       for (let c = 0; c < 3; c++) {
         const v = rgba[i * 4 + c] + amount * (rgba[i * 4 + c] - blur[i * 3 + c]);
@@ -1057,7 +1080,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     return out;
   }
 
-  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
 });
 </script>
 <script>'use strict';
@@ -1122,6 +1145,9 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       // 质量下限随目标缩小（1KB≈q30，≥21KB 回到 q90 与旧行为一致）：
       // 小屏贴片/缩略图场景 q30–40 观感可接受，且更低质量下限 → 二分可承载更高分辨率
       minQ: Math.min(90, Math.max(30, Math.round(30 + 3 * (s.targetKB - 1)))),
+      // 小目标自动去噪（≤1KB 强 2 遍、2-8KB 轻 1 遍、>8KB 不去噪）：
+      // 噪声是压缩熵主源，去噪提升压缩率 → 同大小可承载更高分辨率
+      denoisePasses: s.targetKB <= 1 ? 2 : s.targetKB <= 8 ? 1 : 0,
     };
   }
 
@@ -1988,6 +2014,18 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       const r = await pngToTarget(canvas, s.targetBytes, s.effTol, physMaxCm, s.targetKB, srcMaxEdge, onEnc);
       // 最终编码：oxipng（行滤波 + 高级压缩，公认做法）重编码 → 同等像素更小文件
       const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
+      // 小目标自动去噪（≤8KB）：噪声是 deflate 压缩熵主源 → 去噪后同大小更高分辨率
+      if (s.denoisePasses > 0) {
+        const dctx = finalCanvas.getContext('2d', { willReadFrequently: true });
+        const dimg = dctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
+        dctx.putImageData(dimg, 0, 0);
+      }
+      // 压缩后锐化（PNG 此前缺失）：缩小才锐化，强度随缩小比例（与 JPEG 路径一致）
+      if (r.edge < Math.max(cw, ch)) {
+        const ratio = Math.max(cw, ch) / r.edge;
+        lightSharpen(finalCanvas, ratio > 4 ? 0.5 : ratio > 2 ? 0.45 : 0.4);
+      }
       const oxiData = finalCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, finalCanvas.width, finalCanvas.height);
       const oxiBytes = await encodePngOxipng(oxiData.data, finalCanvas.width, finalCanvas.height);
       const high = Math.min(s.targetBytes * (1 + s.effTol), s.targetBytes + 5000);
@@ -2013,6 +2051,13 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       const pxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
       // 高质量最终编码：mozjpeg（开源 WASM）在搜索到的分辨率/质量处重编码并校验命中
       const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
+      // 小目标自动去噪（≤8KB）：去噪后文件变小 → mozjpeg 终检自动升 q 追窗口 → 同大小质量提升
+      if (s.denoisePasses > 0) {
+        const dctx = finalCanvas.getContext('2d', { willReadFrequently: true });
+        const dimg = dctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
+        dctx.putImageData(dimg, 0, 0);
+      }
       if (r.edge < Math.max(cw, ch)) {
         // 缩小后锐化（缩小才发生）：恢复边缘，抵消缩放软化
         const ratio = Math.max(cw, ch) / r.edge;

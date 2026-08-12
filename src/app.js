@@ -60,6 +60,9 @@
       // 质量下限随目标缩小（1KB≈q30，≥21KB 回到 q90 与旧行为一致）：
       // 小屏贴片/缩略图场景 q30–40 观感可接受，且更低质量下限 → 二分可承载更高分辨率
       minQ: Math.min(90, Math.max(30, Math.round(30 + 3 * (s.targetKB - 1)))),
+      // 小目标自动去噪（≤1KB 强 2 遍、2-8KB 轻 1 遍、>8KB 不去噪）：
+      // 噪声是压缩熵主源，去噪提升压缩率 → 同大小可承载更高分辨率
+      denoisePasses: s.targetKB <= 1 ? 2 : s.targetKB <= 8 ? 1 : 0,
     };
   }
 
@@ -926,6 +929,18 @@
       const r = await pngToTarget(canvas, s.targetBytes, s.effTol, physMaxCm, s.targetKB, srcMaxEdge, onEnc);
       // 最终编码：oxipng（行滤波 + 高级压缩，公认做法）重编码 → 同等像素更小文件
       const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
+      // 小目标自动去噪（≤8KB）：噪声是 deflate 压缩熵主源 → 去噪后同大小更高分辨率
+      if (s.denoisePasses > 0) {
+        const dctx = finalCanvas.getContext('2d', { willReadFrequently: true });
+        const dimg = dctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
+        dctx.putImageData(dimg, 0, 0);
+      }
+      // 压缩后锐化（PNG 此前缺失）：缩小才锐化，强度随缩小比例（与 JPEG 路径一致）
+      if (r.edge < Math.max(cw, ch)) {
+        const ratio = Math.max(cw, ch) / r.edge;
+        lightSharpen(finalCanvas, ratio > 4 ? 0.5 : ratio > 2 ? 0.45 : 0.4);
+      }
       const oxiData = finalCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, finalCanvas.width, finalCanvas.height);
       const oxiBytes = await encodePngOxipng(oxiData.data, finalCanvas.width, finalCanvas.height);
       const high = Math.min(s.targetBytes * (1 + s.effTol), s.targetBytes + 5000);
@@ -951,6 +966,13 @@
       const pxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
       // 高质量最终编码：mozjpeg（开源 WASM）在搜索到的分辨率/质量处重编码并校验命中
       const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
+      // 小目标自动去噪（≤8KB）：去噪后文件变小 → mozjpeg 终检自动升 q 追窗口 → 同大小质量提升
+      if (s.denoisePasses > 0) {
+        const dctx = finalCanvas.getContext('2d', { willReadFrequently: true });
+        const dimg = dctx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
+        dctx.putImageData(dimg, 0, 0);
+      }
       if (r.edge < Math.max(cw, ch)) {
         // 缩小后锐化（缩小才发生）：恢复边缘，抵消缩放软化
         const ratio = Math.max(cw, ch) / r.edge;

@@ -467,6 +467,24 @@ const DRIVER = `
       // 轮 4：1 KB（小目标下限：硬约束 ≤ 1.12KB、JPEG 命中 ~1KB、PNG 无损尽力而为）
       await convertRound(1, [], true, true);
 
+      // 9.5. 1KB 轮 PNG 输出分辨率诊断（观察性：验证去噪+锐化后分辨率不降反升）
+      {
+        const pxLines = [];
+        for (const row of document.querySelectorAll('.file-row')) {
+          if (row.querySelector('.status').textContent !== '完成') continue;
+          const pvBtn = [...row.querySelectorAll('.icon-btn')].find((b) => b.textContent === '预览');
+          pvBtn.click();
+          await tick(300);
+          const meta = document.querySelector('.modal-meta');
+          const m = meta ? /([0-9]+)×([0-9]+)px @ ([0-9]+) DPI/.exec(meta.textContent) : null;
+          if (m) pxLines.push(row.querySelector('.name').textContent + '=' + m[1] + '×' + m[2] + 'px@' + m[3]);
+          const close = document.querySelector('.modal-box .btn');
+          if (close) close.click();
+          await tick(120);
+        }
+        report(true, '1KB 轮输出分辨率: ' + (pxLines.join(', ') || '（无 px 元数据）'));
+      }
+
       // 10. 下载全部：直接逐张下载（不经 ZIP）——9 张完成图（坏文件跳过）
       {
         const dlBtn = document.querySelector('#btnDownloadAll');
