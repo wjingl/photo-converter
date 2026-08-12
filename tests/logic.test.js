@@ -289,8 +289,10 @@ test('parseZip: onProgress 回调逐步调用', async () => {
     { name: 'c.png', data: new Uint8Array(10) },
   ]);
   let calls = 0;
-  await PI.parseZip(zip, () => { calls++; });
-  assert.strictEqual(calls, 3);
+  let last = [0, 0];
+  await PI.parseZip(zip, (i, total) => { calls++; last = [i, total]; });
+  assert.strictEqual(calls, 4); // 3 条目 + 完成回调
+  assert.deepStrictEqual(last, [3, 3]); // 完成回调报告 100%
 });
 
 test('parseZip: 条目超过 512MB 上限抛错', async () => {

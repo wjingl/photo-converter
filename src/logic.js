@@ -332,6 +332,7 @@
       entries.push({ name, data: raw });
       off += 46 + nameLen + extraLen + commentLen;
     }
+    if (onProgress) onProgress(count, count); // 完成回调 → 进度 100%
     return entries;
   }
 

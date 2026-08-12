@@ -922,6 +922,7 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       entries.push({ name, data: raw });
       off += 46 + nameLen + extraLen + commentLen;
     }
+    if (onProgress) onProgress(count, count); // 完成回调 → 进度 100%
     return entries;
   }
 
@@ -1231,8 +1232,26 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     }
   }
 
-  // 压缩包导入：LibArchive WASM 解压（zip/rar/7z/tar 等多格式）→ 按包内路径导入（保留文件夹结构）
-  // 含密码的压缩包 → 抛错提示；解压上限 128MB（防压缩炸弹）
+  // 压缩包选择：showOpenFilePicker（原生文件对话框，含 ZIP 过滤器）；不可用时回退隐藏 input
+  async function pickZipViaPicker() {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'ZIP 压缩包', accept: { 'application/zip': ['.zip'] } }],
+        multiple: false,
+      });
+      const file = await handle.getFile();
+      await importZipFile(file);
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // 用户取消
+      if (typeof window.showOpenFilePicker !== 'function') {
+        $('#zipInput').click(); // API 不可用 → 回退
+      } else {
+        showPageError('选择压缩包失败：' + String(e && e.message || e).slice(0, 120));
+      }
+    }
+  }
+
+  // 压缩包导入：按包内路径导入（保留文件夹结构）；含密码 → 抛错；单条目上限 512MB
   async function importZipFile(file) {
     if (file.size > 512 * 1024 * 1024) {
       showPageError('压缩包超过 512MB 上限');
@@ -1242,23 +1261,23 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
     const importFill = document.getElementById('importProgressFill');
     if (importWrap) importWrap.hidden = false;
     if (importFill) importFill.style.width = '0%';
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let entries;
     try {
-      entries = await PI.parseZip(bytes, (i, total) => {
-        if (importFill) importFill.style.width = Math.round(total ? (i / total) * 100 : 0) + '%';
-      }); // ZIP 解析（含密码检测与 CRC 校验）
-    } catch (e) {
-      if (importWrap) importWrap.hidden = true; // 异常路径也必须收进度条
-      const msg = String(e && e.message || e);
-      if (/password|encrypted|password protected/i.test(msg)) {
-        showPageError('压缩包含密码保护，暂不支持（请先解压去除密码后再上传）');
-      } else {
-        showPageError('压缩包解析失败：' + msg.slice(0, 160) + '（当前仅支持 ZIP 格式）');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let entries;
+      try {
+        entries = await PI.parseZip(bytes, (i, total) => {
+          if (importFill) importFill.style.width = Math.round(total ? (i / total) * 100 : 0) + '%';
+        }); // ZIP 解析（含密码检测与 CRC 校验）
+      } catch (e) {
+        const msg = String(e && e.message || e);
+        if (/password|encrypted|password protected/i.test(msg)) {
+          showPageError('压缩包含密码保护，暂不支持（请先解压去除密码后再上传）');
+        } else {
+          showPageError('压缩包解析失败：' + msg.slice(0, 160) + '（当前仅支持 ZIP 格式）');
+        }
+        return;
       }
-      return;
-    }
-    let added = 0;
+      let added = 0;
     for (const en of entries) {
       const nm = en.name;
       const base = nm.split('/').pop();
@@ -1270,14 +1289,17 @@ if (isRunningInCloudFlareWorkers || isRunningInNode) {
       added++;
     }
     refresh();
-    if (importWrap) importWrap.hidden = true;
+    if (importFill) importFill.style.width = '100%';
     if (!added) showPageError('压缩包中没有支持的图片（jpg/png/webp/bmp/gif/avif/svg）');
+    } finally {
+      if (importWrap) importWrap.hidden = true; // 无论成败都收起进度条
+    }
   }
 
   function bindImport() {
     $('#btnPickFiles').addEventListener('click', () => $('#fileInput').click());
-    // 压缩包上传（替代文件夹选择：file:// 下浏览器文件夹 API 受限，ZIP 上传最可靠）
-    $('#btnPickZip').addEventListener('click', () => $('#zipInput').click());
+    // 压缩包上传：showOpenFilePicker 主路径（用户环境已验证 File System Access 可用）
+    $('#btnPickZip').addEventListener('click', () => pickZipViaPicker());
     $('#zipInput').addEventListener('change', async (e) => {
       const file = e.target.files && e.target.files[0];
       e.target.value = '';
