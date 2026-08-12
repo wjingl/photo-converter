@@ -588,24 +588,29 @@
       // 4) 解压（method 8 deflate / 0 store；60s 超时防挂起）
       let raw;
       if (method === 8 && typeof DecompressionStream !== 'undefined') {
-        const ds = new DecompressionStream('deflate-raw');
-        const writer = ds.writable.getWriter();
-        writer.write(comp);
-        writer.close();
-        const reader = ds.readable.getReader();
-        const parts = [];
-        const readAll = (async () => {
-          for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
-          const total = parts.reduce((n, p) => n + p.length, 0);
-          const out = new Uint8Array(total);
-          let o = 0;
-          for (const p of parts) { out.set(p, o); o += p.length; }
-          return out;
-        })();
-        raw = await Promise.race([
-          readAll,
-          new Promise((_, rej) => setTimeout(() => rej(new Error('解压超时（60s）: ' + name)), 60000)),
-        ]);
+        let ds = null;
+        try { ds = new DecompressionStream('deflate-raw'); } catch (e) { ds = null; } // 旧 Firefox 不支持 deflate-raw 格式
+        if (ds) {
+          const writer = ds.writable.getWriter();
+          writer.write(comp);
+          writer.close();
+          const reader = ds.readable.getReader();
+          const parts = [];
+          const readAll = (async () => {
+            for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
+            const total = parts.reduce((n, p) => n + p.length, 0);
+            const out = new Uint8Array(total);
+            let o = 0;
+            for (const p of parts) { out.set(p, o); o += p.length; }
+            return out;
+          })();
+          raw = await Promise.race([
+            readAll,
+            new Promise((_, rej) => setTimeout(() => rej(new Error('解压超时（60s）: ' + name)), 60000)),
+          ]);
+        } else {
+          raw = inflateRaw(comp); // deflate-raw 构造失败（旧 Firefox）→ 纯 JS 兜底
+        }
       } else if (method === 8) {
         raw = inflateRaw(comp); // 纯 JS 兜底（旧浏览器无 DecompressionStream）
       } else if (method === 0) {
@@ -675,8 +680,9 @@
     let offset = 0;
     for (const e of entries) {
       const nameBytes = encoder.encode(e.name);
-      const compressed = await rawDeflate(e.data);
-      const useStore = compressed.length >= e.data.length;
+      let compressed = null;
+      try { compressed = await rawDeflate(e.data); } catch (err) { compressed = null; } // deflate-raw 不可用（旧 Firefox）→ store 降级
+      const useStore = !compressed || compressed.length >= e.data.length;
       const dataBytes = useStore ? e.data : compressed;
       const method = useStore ? 0 : 8;
       const crc = crc32(e.data);
