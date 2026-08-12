@@ -34,6 +34,7 @@
 
 ## 平台说明
 
+- **银河麒麟（Kylin）等国产化 Linux**：内置浏览器直接可用——已适配旧版 Firefox 内核（ZIP 导入自动启用纯 JS 解压兜底，压缩包与转换功能完整可用）
 - **Windows / Linux**：任意浏览器双击打开 `index.html`
 - **Android**：把 `index.html` 复制到手机，用 Chrome / Edge 打开（文件管理器 → 选择浏览器打开）；「选择文件夹」在 Android Chrome 同样可用
 - 设置（目标大小、比例、格式等）会自动记忆，下次打开仍有效
