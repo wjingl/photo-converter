@@ -639,3 +639,29 @@ test('quantize: 合并近重复格心（调色板两两距离 ≥ 12）', () => 
     }
   }
 });
+
+// ---------- boostSaturation（饱和增强）----------
+test('boostSaturation: 灰度与黑白像素不变，值域合法', () => {
+  const rgba = new Uint8ClampedArray(4 * 1 * 4);
+  rgba[0] = 120; rgba[1] = 120; rgba[2] = 120; rgba[3] = 255; // 灰
+  rgba[4] = 0; rgba[5] = 0; rgba[6] = 0; rgba[7] = 255;       // 黑
+  rgba[8] = 255; rgba[9] = 255; rgba[10] = 255; rgba[11] = 255; // 白
+  const before = Array.from(rgba);
+  PI.boostSaturation(rgba, 4, 1, 0.5);
+  for (let i = 0; i < 3; i++) {
+    assert.strictEqual(rgba[i], before[i]);     // 灰不变
+    assert.strictEqual(rgba[4 + i], before[4 + i]);   // 黑不变
+    assert.strictEqual(rgba[8 + i], before[8 + i]);   // 白不变
+    assert.strictEqual(rgba[i * 4 + 3], 255);   // alpha 不动
+  }
+});
+
+test('boostSaturation: 彩色像素饱和度提升（max-min 增大）', () => {
+  const rgba = new Uint8ClampedArray([200, 100, 50, 255]);
+  const sat = (r, g, b) => (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(1, Math.max(r, g, b));
+  const before = sat(200, 100, 50);
+  PI.boostSaturation(rgba, 1, 1, 0.3);
+  const after = sat(rgba[0], rgba[1], rgba[2]);
+  assert.ok(after > before, `饱和度应提升：${before.toFixed(3)} -> ${after.toFixed(3)}`);
+  assert.ok(rgba.every((v) => v <= 255 && v >= 0));
+});

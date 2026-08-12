@@ -350,6 +350,25 @@
     return indices;
   }
 
+  // ---------- 饱和增强 ----------
+  // RGB 向亮度拉伸：l=(r+g+b)/3，c' = clamp(l + (c-l)×(1+amount))。
+  // 灰度（r=g=b）与纯黑/纯白不变；彩色像素饱和度提升——补偿压缩（去噪/量化/
+  // JPEG 色度下采样）造成的发灰。确定性，原地修改。
+  function boostSaturation(rgba, w, h, amount) {
+    const k = 1 + amount;
+    for (let i = 0; i < w * h * 4; i += 4) {
+      const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+      const l = (r + g + b) / 3;
+      const nr = Math.round(l + (r - l) * k);
+      const ng = Math.round(l + (g - l) * k);
+      const nb = Math.round(l + (b - l) * k);
+      rgba[i] = nr < 0 ? 0 : nr > 255 ? 255 : nr;
+      rgba[i + 1] = ng < 0 ? 0 : ng > 255 ? 255 : ng;
+      rgba[i + 2] = nb < 0 ? 0 : nb > 255 ? 255 : nb;
+    }
+    return rgba;
+  }
+
   // ---------- 反锐化掩模（盒式模糊近似高斯 + 增强）----------
   function unsharpMask(rgba, w, h, radius = 1, amount = 0.6) {
     const n = w * h;
@@ -590,5 +609,5 @@
     return out;
   }
 
-  return { crc32, encodePng, quantize, ditherIndices, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, ditherIndices, boostSaturation, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
 });
