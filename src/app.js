@@ -727,6 +727,45 @@
     return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', q / 100));
   }
 
+  // ---------- Worker 并行编码（量化/抖动/deflate 多核并行）----------
+  // 懒创建 Worker 池（≤4 个，与并发路数对齐，轮转分配）；创建失败/编码抛错 → 调用方降级同步
+  let workerPool = null;
+  let workerMsgId = 0;
+  function getPiWorker() {
+    if (!workerPool) {
+      try {
+        const srcEl = document.getElementById('workerSrc');
+        const src = srcEl && srcEl.textContent.trim();
+        if (!src || typeof Worker === 'undefined') { workerPool = { ok: false }; return null; }
+        workerPool = { ok: true, blob: new Blob([src], { type: 'text/javascript' }), list: [], next: 0 };
+      } catch (e) { workerPool = { ok: false }; return null; }
+    }
+    if (!workerPool.ok) return null;
+    if (workerPool.next >= workerPool.list.length) {
+      if (workerPool.list.length >= 4) {
+        return workerPool.list[workerPool.next++ % workerPool.list.length]; // 池满 → 轮转复用
+      }
+      try { workerPool.list.push(new Worker(URL.createObjectURL(workerPool.blob))); }
+      catch (e) { workerPool.ok = false; return null; }
+    }
+    return workerPool.list[workerPool.next++];
+  }
+  function workerEncode(width, height, rgba, colors, ditherFactor, phys) {
+    return new Promise((resolve, reject) => {
+      const w = getPiWorker();
+      if (!w) return reject(new Error('Worker 不可用'));
+      const id = ++workerMsgId;
+      const onMsg = (e) => {
+        if (!e.data || e.data.id !== id) return;
+        w.removeEventListener('message', onMsg);
+        if (e.data.error) reject(new Error(e.data.error));
+        else resolve({ bytes: new Uint8Array(e.data.bytes), size: e.data.size });
+      };
+      w.addEventListener('message', onMsg);
+      w.postMessage({ id, cmd: 'encode', width, height, rgba, colors, ditherFactor, phys }, [rgba.buffer]);
+    });
+  }
+
   // ---------- oxipng（Squoosh 同款 PNG 优化编码器，内嵌离线）----------
   // 行滤波（Paeth/Sub/Up/Average）选择 + 高级压缩 → 同等内容下文件更小 → 目标大小内可承载更高分辨率
   let oxipngModule = null;
@@ -906,23 +945,21 @@
       upper = Math.min(upper, Math.max(3, Math.ceil(Math.sqrt(targetBytes * 8)) + 2));
     }
     const getData = (c) => c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height);
-    const encode = async (c) => {
-      if (onEnc) onEnc();
-      const data = getData(c);
+    // 主线程同步编码（Worker 不可用/失败时降级）——与 Worker 路径同一 logic.js，输出一致
+    const encodeSync = async (data, phys) => {
       let hasAlpha = false;
       for (let i = 3; i < data.data.length; i += 4) {
         if (data.data[i] !== 255) { hasAlpha = true; break; }
       }
-      const phys = dpiFromPx(Math.max(c.width, c.height), physMaxCm);
       if (colors > 0) {
         // 调色板量化路径：1 字节/像素索引 + 高度可压缩 → 同大小更高分辨率；
         // Bayer 有序抖动把色带打散成细颗粒（打破"色块崩溃"）
-        const { palette, indices: rawIdx } = PI.quantize(data.data, colors);
+        const q = PI.quantize(data.data, colors);
         // 抖动强度系数：0 = 关闭（用量化原始索引）；>0 按系数（自动档 0.5）
-        const indices = ditherFactor > 0 ? PI.ditherIndices(data.data, palette, data.width, data.height, ditherFactor) : rawIdx;
+        const indices = ditherFactor > 0 ? PI.ditherIndices(data.data, q.palette, data.width, data.height, ditherFactor) : q.indices;
         const bytes = await PI.encodePng({
           width: data.width, height: data.height,
-          rgba: data.data, indices, palette, mode: 'palette', phys,
+          rgba: data.data, indices, palette: q.palette, mode: 'palette', phys,
         });
         return { bytes, phys };
       }
@@ -931,6 +968,18 @@
         rgba: data.data, mode: hasAlpha ? 'rgba' : 'rgb', phys,
       });
       return { bytes, phys };
+    };
+    const encode = async (c) => {
+      if (onEnc) onEnc();
+      const data = getData(c);
+      const phys = dpiFromPx(Math.max(c.width, c.height), physMaxCm);
+      // Worker 并行优先；失败（不可用/异常）→ 主线程同步降级，不中断批处理
+      try {
+        const r = await workerEncode(data.width, data.height, data.data, colors, ditherFactor, phys);
+        return { bytes: r.bytes, phys };
+      } catch (e) {
+        return encodeSync(data, phys);
+      }
     };
     // 边界：演算上限像素下直通仍低于下限 → 内容限制
     const up = await encode(scaleCanvasByEdge(canvas, upper));

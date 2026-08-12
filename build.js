@@ -37,6 +37,33 @@ oxi = oxi.replace('export { initSync }', 'window.OxipngInitSync = initSync;');
 oxi = oxi.replace('export default __wbg_init;', '');
 html = html.replace('<!--OXIPNG_GLUE-->', oxi);
 html = html.replace('<!--OXIPNG_WASM-->', fs.readFileSync(path.join(root, 'vendor', 'oxipng_enc.wasm')).toString('base64'));
+// Worker 并行编码脚本：logic.js（UMD）+ 入口（quantize/dither/encodePng，供 #workerSrc）
+const WORKER_ENTRY = `
+;(function () {
+  'use strict';
+  self.onmessage = async (e) => {
+    const { id, cmd, width, height, rgba, colors, ditherFactor, phys } = e.data || {};
+    try {
+      if (cmd !== 'encode') throw new Error('unknown cmd: ' + cmd);
+      const data = new Uint8ClampedArray(rgba);
+      let bytes;
+      if (colors > 0) {
+        const q = self.PI.quantize(data, colors);
+        const indices = ditherFactor > 0 ? self.PI.ditherIndices(data, q.palette, width, height, ditherFactor) : q.indices;
+        bytes = await self.PI.encodePng({ width, height, rgba: data, indices, palette: q.palette, mode: 'palette', phys });
+      } else {
+        let hasAlpha = false;
+        for (let i = 3; i < data.length; i += 4) { if (data[i] !== 255) { hasAlpha = true; break; } }
+        bytes = await self.PI.encodePng({ width, height, rgba: data, mode: hasAlpha ? 'rgba' : 'rgb', phys });
+      }
+      self.postMessage({ id, bytes: bytes.buffer, size: bytes.length }, [bytes.buffer]);
+    } catch (err) {
+      self.postMessage({ id, error: String(err && err.message || err) });
+    }
+  };
+})();
+`;
+html = html.replace('/*WORKER_SRC*/', read('src/logic.js') + '\n' + WORKER_ENTRY);
 html = html.replace('<!--LOGIC-->', read('src/logic.js'));
 html = html.replace('<!--APP-->', read('src/app.js'));
 

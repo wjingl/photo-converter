@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <meta name="description" content="批量图片转换：统一大小与比例">
 <!-- 安全：CSP 禁止一切网络连接与外部资源，仅允许内联脚本/样式与本地 WASM -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src blob:">
 <title>图片批量转换 · 统一大小</title>
 <!--STYLE-->
 </head>
@@ -133,6 +133,7 @@
 <script id="mozjpegWasm"><!--MOZJPEG_WASM--></script>
 <script><!--OXIPNG_GLUE--></script>
 <script id="oxipngWasm"><!--OXIPNG_WASM--></script>
+<script id="workerSrc">/*WORKER_SRC*/</script>
 <script><!--LOGIC--></script>
 <script><!--APP--></script>
 </body>
