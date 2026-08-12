@@ -74,6 +74,21 @@ const DRIVER = `
         } catch (e) { selfTest = 'ERR:' + String(e).slice(0, 120); }
         report(selfTest === 'OK entries=1 name=a.png', 'PI buildZip+parseZip 自测: ' + selfTest);
       }
+      // 高级设置：折叠栏存在 + 覆盖生效（钩子验证）
+      {
+        const panel = document.querySelector('#advancedPanel');
+        report(!!panel && panel.open === false, '高级设置折叠栏存在且默认收起');
+        report(document.querySelector('#satAutoToggle').checked && document.querySelector('#ditherAutoToggle').checked,
+          '饱和度/抖动默认自动档');
+        const modeSel = document.querySelector('#colorModeSelect');
+        modeSel.value = '8';
+        modeSel.dispatchEvent(new Event('change', { bubbles: true }));
+        const st = window.__piState && window.__piState();
+        report(!!st && st.settings.colorMode === '8', '色数覆盖为 8 色（__piState 钩子生效）');
+        modeSel.value = 'auto';
+        modeSel.dispatchEvent(new Event('change', { bubbles: true }));
+        report(window.__piState().settings.colorMode === 'auto', '色数恢复自动档');
+      }
       // 运行时诊断：readyState / ArchiveWasm / boot 痕迹
       report(document.readyState, 'readyState=' + document.readyState + ' ArchiveWasm=' + typeof window.ArchiveWasm +
         ' themeSelect=' + (document.querySelector('#themeSelect') ? '存在' : '缺失'));
