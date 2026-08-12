@@ -868,8 +868,10 @@
       }
       const phys = dpiFromPx(Math.max(c.width, c.height), physMaxCm);
       if (colors > 0) {
-        // 调色板量化路径：1 字节/像素索引 + 高度可压缩 → 同大小更高分辨率
-        const { palette, indices } = PI.quantize(data.data, colors);
+        // 调色板量化路径：1 字节/像素索引 + 高度可压缩 → 同大小更高分辨率；
+        // Bayer 有序抖动把色带打散成细颗粒（打破"色块崩溃"）
+        const { palette } = PI.quantize(data.data, colors);
+        const indices = PI.ditherIndices(data.data, palette, data.width, data.height);
         const bytes = await PI.encodePng({
           width: data.width, height: data.height,
           rgba: data.data, indices, palette, mode: 'palette', phys,
