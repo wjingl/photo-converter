@@ -19,35 +19,37 @@
 
 ## 设计决策
 
-### D1 色数梯度调整
+### D1 色数梯度（保持 8/16/32，全部档位启用抖动）
 
-| 目标大小 | 色数（现） | 色数（新） |
+| 目标大小 | 色数 | 说明 |
 |---|---|---|
-| ≤4 KB | 8 / 16 | **16** |
-| ≤8 KB | 32 | **32**（不变） |
-| >8 KB | 0 全彩 | 0（不变） |
+| ≤2 KB | 8 | 极端小目标：8 色 + 抖动（用户确认：抖动解决色带后 8 色可接受） |
+| ≤4 KB | 16 | 甜点色数（MSE 降 73%） |
+| ≤8 KB | 32 | 不变 |
+| >8 KB | 0 全彩 | 不变 |
 
-1KB 甜点色数 16：48×72 仅 886B ≤ 1.12KB 上限，MSE 降 73%。≤4KB 统一 16 色
-（原 ≤2KB 档 8 色并入）。
+### D2 Bayer 每通道独立有序抖动（logic.js 新增 `ditherIndices`）
 
-### D2 Floyd-Steinberg 误差扩散抖动（logic.js 新增 `ditherIndices`）
-
-`PI.ditherIndices(rgba, palette)` → indices：以 `quantize` 产出的调色板为基准，
-从左到右、从上到下对每个像素取最近色并把量化误差按 7/16、3/16、5/16、1/16
-扩散给右侧/左下/下方/右下邻居。确定性算法（无随机），二分搜索语义保持。
+`PI.ditherIndices(rgba, palette, w, h)` → indices：8×8 Bayer 阈值矩阵（R 原矩阵、
+G 行平移、B 列镜像），量化前给 **RGB 每通道独立**加 `(bayer/64 - 0.5) × 255/色数`
+的确定性扰动。实测：单通道对角线扰动在颜色轨迹上的有效分量仅 ~44%（色带只平移
+不交织）；每通道独立扰动构成三维扰动 → 相邻像素阈值不同 → 整片同色区域打散成
+棋盘状交织（色带 → 细颗粒）。确定性算法（无随机），二分搜索语义保持。
 
 - `quantize` 保持纯净（不抖动），组合由调用方完成：`quantize` → `ditherIndices` → `encodePng`；
 - 成本：O(像素×色数)，1KB 目标（≤ 几千像素）可忽略；
-- 抖动把可见色带打散成细颗粒（胶片噪点观感），16 色时大小成本仅 +20%。
+- 实测（32×32 平滑渐变 + 8 色）：同索引连续段平均长度从 ~2.2px 降到 ~1.5px（色带打散）；
+- 与 Floyd-Steinberg 对比：FS 保局部平均色但空间打散弱（实测多样性仅 +13%），
+  Bayer 有序抖动直接按空间阈值交织（+27%），更适合"打破色带"目标。
 
 ### D3 管线与验证
 
-- app.js：`paletteColors = targetKB <= 4 ? 16 : targetKB <= 8 ? 32 : 0`；
-  `pngToTarget` encode() 调色板分支加 `PI.ditherIndices(data.data, palette)`；
+- app.js：`paletteColors = targetKB <= 2 ? 8 : targetKB <= 4 ? 16 : targetKB <= 8 ? 32 : 0`；
+  `pngToTarget` encode() 调色板分支加 `PI.ditherIndices(data.data, palette, data.width, data.height)`；
 - 单测：`ditherIndices` 输出长度/索引合法；**banding 打破断言**——渐变图抖动后
-  相邻索引变化比例显著高于无抖动；
+  同索引连续段长度显著变短（色带→颗粒）；
 - e2e：PALETTE_OK（colorType=3）断言不变；1KB 轮分辨率诊断行观察像素；
-- 文案：hint/README 的"8–32 色"→"16–32 色"，注明误差扩散抖动。
+- 文案：hint/README 注明"8–32 色 + 抖动"。
 
 ## 涉及文件
 

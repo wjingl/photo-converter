@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 消除 1KB 级调色板输出"色块崩溃/色带"：色数 8→16（≤4KB 统一 16 色）+ Floyd-Steinberg 误差扩散抖动。
+**Goal:** 消除 1KB 级调色板输出"色块崩溃/色带"：Bayer 每通道独立有序抖动（色带→颗粒）；色数梯度保持 8/16/32（≤2KB 极端小目标 8 色 + 抖动，用户确认）。
 
 **Architecture:** `logic.js` 新增纯函数 `ditherIndices(rgba, palette)`（误差扩散，确定性）；`quantize` 保持纯净，app.js 组合 `quantize → ditherIndices → encodePng`。
 
@@ -163,16 +163,16 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: Task 1 的 `PI.ditherIndices(rgba, palette, w, h)`。
-- Produces: `paletteColors = targetKB <= 4 ? 16 : targetKB <= 8 ? 32 : 0`。
+- Produces: `paletteColors = targetKB <= 2 ? 8 : targetKB <= 4 ? 16 : targetKB <= 8 ? 32 : 0`。
 
 - [ ] **Step 1: 色数梯度**
 
 `src/app.js` `currentSettings` 中 `paletteColors` 行替换：
 
 ```js
-      // 小目标自动调色板量化（≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损）：
-      // 8 色对照片太少（MSE 高 → 色块崩溃），16 色 + 误差扩散抖动是 1KB 甜点
-      paletteColors: s.targetKB <= 4 ? 16 : s.targetKB <= 8 ? 32 : 0,
+      // 小目标自动调色板量化（≤2KB 8 色、≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损）：
+      // 抖动解决色带后 8 色在极端小目标可接受；16 色是 1KB 甜点（MSE 降 73%）
+      paletteColors: s.targetKB <= 2 ? 8 : s.targetKB <= 4 ? 16 : s.targetKB <= 8 ? 32 : 0,
 ```
 
 - [ ] **Step 2: encode() 调色板分支加抖动**
@@ -182,7 +182,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 ```js
       if (colors > 0) {
         // 调色板量化路径：1 字节/像素索引 + 高度可压缩 → 同大小更高分辨率；
-        // 误差扩散抖动把色带打散成细颗粒（16 色时观感最优，大小成本 ~20%）
+        // Bayer 有序抖动把色带打散成细颗粒（打破"色块崩溃"）
         const { palette } = PI.quantize(data.data, colors);
         const indices = PI.ditherIndices(data.data, palette, data.width, data.height);
         const bytes = await PI.encodePng({
@@ -196,13 +196,13 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - [ ] **Step 3: 构建 + e2e 回归**
 
 Run: `node build.js && node tools/gen-e2e.js && node tools/e2e-run.js`
-Expected: 全部轮 PASS（含 1KB 轮诊断行——16 色像素较 8 色略降但观感大幅改善）、PALETTE_OK、下载校验 PASS。
+Expected: 全部轮 PASS（含 1KB 轮诊断行——抖动后像素与 8 色时相当，观感大幅改善）、PALETTE_OK、下载校验 PASS。
 
 - [ ] **Step 4: 提交**
 
 ```bash
 git add src/app.js index.html
-git commit -m "feat: 调色板路径 16 色 + 误差扩散抖动（消除 1KB 色块崩溃）
+git commit -m "feat: 调色板路径接入 Bayer 抖动（消除色块崩溃；8/16/32 色梯度保留）
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
