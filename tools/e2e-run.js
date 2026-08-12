@@ -92,6 +92,10 @@ async function main() {
       if (fs.readdirSync(dlDir).some((f) => f.endsWith('.zip'))) break;
       await sleep(500);
     }
+    // 等待「下载全部」逐张下载落盘（最多 30s）
+    for (let i = 0; i < 60 && fs.readdirSync(dlDir).filter((f) => !f.endsWith('.zip')).length < 9; i++) {
+      await sleep(500);
+    }
   } finally {
     if (ws) { try { ws.close(); } catch (e) {} }
     browser.kill();
@@ -122,6 +126,13 @@ async function main() {
       console.log('=== ZIP 校验（Python zipfile）===');
       console.log(py.status === 0 ? (py.stdout || 'ZIP_OK') : ('ZIP_FAIL: ' + py.stderr));
     }
+    const imgs = fs.readdirSync(dlDir).filter((f) => !f.endsWith('.zip'));
+    console.log('=== 下载全部（逐张下载）校验 ===');
+    console.log('文件数=' + imgs.length + '（期望 9：7 PNG + 2 JPEG，坏文件跳过）');
+    const over = imgs.filter((f) => fs.statSync(path.join(dlDir, f)).size > 1147);
+    console.log(imgs.length === 9 && over.length === 0
+      ? '下载全部校验: PASS（9 张全部 ≤ 1.12KB）'
+      : '下载全部校验: FAIL（' + (imgs.length !== 9 ? '期望 9 实际 ' + imgs.length : '超出 1.12KB: ' + over.join(', ')) + '）');
   }
 }
 

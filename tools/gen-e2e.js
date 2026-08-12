@@ -466,6 +466,20 @@ const DRIVER = `
 
       // 轮 4：1 KB（小目标下限：硬约束 ≤ 1.12KB、JPEG 命中 ~1KB、PNG 无损尽力而为）
       await convertRound(1, [], true, true);
+
+      // 10. 下载全部：直接逐张下载（不经 ZIP）——9 张完成图（坏文件跳过）
+      {
+        const dlBtn = document.querySelector('#btnDownloadAll');
+        report(!!dlBtn, '下载全部按钮存在');
+        if (dlBtn) {
+          report(!dlBtn.disabled, '下载全部按钮可用（有完成项）');
+          dlBtn.click();
+          await tick(4000);
+          report(true, '已触发下载全部（9 张：7 PNG + 2 JPEG，坏文件跳过）');
+        }
+        document.querySelector('#btnClearAll').click();
+        await tick(200);
+      }
     } catch (e) {
       window.__e2eFatal = String(e && e.stack || e);
       report(false, '驱动异常: ' + e.message + ' | ' + (e.stack || '').split('\\n')[0]);

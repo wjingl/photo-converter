@@ -469,6 +469,7 @@
     $('#btnCancel').disabled = !state.converting;
     $('#btnReconvert').disabled = state.converting || !hasResult;
     $('#btnExportZip').disabled = !hasDone || state.converting;
+    $('#btnDownloadAll').disabled = !hasDone || state.converting;
     $('#btnClearDone').disabled = !hasDone;
     $('#btnClearAll').disabled = !has;
   }
@@ -1054,6 +1055,7 @@
     $('#btnClearDone').addEventListener('click', () => removeItems((i) => i.status === 'done'));
     $('#btnClearAll').addEventListener('click', () => removeItems(() => true));
     $('#btnExportZip').addEventListener('click', () => exportZip());
+    $('#btnDownloadAll').addEventListener('click', () => downloadAll());
   }
 
   // ---------- 导出 ZIP ----------
@@ -1065,6 +1067,30 @@
     return n || 'unnamed';
   }
 
+  // 文件名去重（_k 后缀；ZIP 导出与逐张下载共享）
+  function uniqueName(name, used) {
+    let uniq = name, k = 1;
+    while (used.has(uniq)) {
+      const dot = name.lastIndexOf('.');
+      uniq = dot > 0 ? name.slice(0, dot) + '_' + k + name.slice(dot) : name + '_' + k;
+      k++;
+    }
+    used.add(uniq);
+    return uniq;
+  }
+
+  // ---------- 下载全部：直接逐张下载（不经 ZIP）----------
+  // 跳过失败/未完成项；相邻间隔 ~120ms 防 Chrome 丢弃快速连续的程序化下载
+  async function downloadAll() {
+    const done = state.items.filter((i) => i.status === 'done');
+    if (!done.length) return;
+    const used = new Set();
+    for (const item of done) {
+      downloadBlob(item.resultBlob, uniqueName(item.outName, used));
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+
   async function exportZip() {
     const done = state.items.filter((i) => i.status === 'done');
     if (!done.length) return;
@@ -1073,14 +1099,7 @@
     const used = new Set();
     for (const item of done) {
       let name = sanitizeZipName(keepTree ? item.relPath : item.name);
-      let uniq = name;
-      let k = 1;
-      while (used.has(uniq)) {
-        const dot = name.lastIndexOf('.');
-        uniq = dot > 0 ? name.slice(0, dot) + '_' + k + name.slice(dot) : name + '_' + k;
-        k++;
-      }
-      used.add(uniq);
+      const uniq = uniqueName(name, used);
       entries.push({ name: uniq, data: new Uint8Array(await item.resultBlob.arrayBuffer()) });
     }
     const zip = await PI.buildZip(entries);
