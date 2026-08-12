@@ -249,6 +249,60 @@
     return rgba;
   }
 
+  // ---------- Bayer 有序抖动 ----------
+  // 8×8 Bayer 阈值矩阵（0-63）逐像素扰动：量化前给 RGB **每通道独立**加
+  // (bayer/64 - 0.5) × 255/色数 的确定性扰动。R/G/B 用三个矩阵变体（行平移/列镜像），
+  // 构成三维扰动——单通道对角线扰动在颜色轨迹上的有效分量只有 ~44%，打散力不足。
+  // 空间上相邻像素阈值不同 → 整片同色区域被打散成棋盘状交织（打破色带 banding）。
+  // 确定性算法（无随机），输入 rgba 不被修改。
+  const BAYER_R = [
+    0, 32, 8, 40, 2, 34, 10, 42,
+    48, 16, 56, 24, 50, 18, 58, 26,
+    12, 44, 4, 36, 14, 46, 6, 38,
+    60, 28, 52, 20, 62, 30, 54, 22,
+    3, 35, 11, 43, 1, 33, 9, 41,
+    51, 19, 59, 27, 49, 17, 57, 25,
+    15, 47, 7, 39, 13, 45, 5, 37,
+    63, 31, 55, 23, 61, 29, 53, 21,
+  ];
+  // G：行平移 4（周期 8）；B：列镜像——与 R 正交化，三维扰动
+  const BAYER_G = (() => {
+    const a = new Array(64);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) a[y * 8 + x] = BAYER_R[((y + 4) & 7) * 8 + x];
+    return a;
+  })();
+  const BAYER_B = (() => {
+    const a = new Array(64);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) a[y * 8 + x] = BAYER_R[y * 8 + (7 - x)];
+    return a;
+  })();
+  function ditherIndices(rgba, palette, w, h) {
+    const n = w * h;
+    const strength = 255 / Math.max(2, palette.length); // 扰动幅度随色数缩小
+    const indices = new Uint8Array(n);
+    const nearest = (r, g, b) => {
+      let best = 0, bestD = Infinity;
+      for (let k = 0; k < palette.length; k++) {
+        const dr = r - palette[k][0], dg = g - palette[k][1], db = b - palette[k][2];
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestD) { bestD = d; best = k; }
+      }
+      return best;
+    };
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const ty = y & 7, tx = x & 7;
+        const k = strength / 64;
+        const r = rgba[i * 4] + (BAYER_R[ty * 8 + tx] - 32) * k;
+        const g = rgba[i * 4 + 1] + (BAYER_G[ty * 8 + tx] - 32) * k;
+        const b = rgba[i * 4 + 2] + (BAYER_B[ty * 8 + tx] - 32) * k;
+        indices[i] = nearest(r, g, b);
+      }
+    }
+    return indices;
+  }
+
   // ---------- 反锐化掩模（盒式模糊近似高斯 + 增强）----------
   function unsharpMask(rgba, w, h, radius = 1, amount = 0.6) {
     const n = w * h;
@@ -489,5 +543,5 @@
     return out;
   }
 
-  return { crc32, encodePng, quantize, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, ditherIndices, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
 });

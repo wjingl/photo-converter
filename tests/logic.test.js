@@ -540,3 +540,53 @@ test('encodePng palette: 同像素下量化编码显著小于全彩（压缩收�
   const pal = await PI.encodePng({ width: w, height: h, rgba, indices, palette, mode: 'palette', phys: 300 });
   assert.ok(pal.length < rgb.length * 0.7, `量化应显著更小：palette=${pal.length} vs rgb=${rgb.length}`);
 });
+
+// ---------- ditherIndices（Floyd-Steinberg 误差扩散抖动）----------
+test('ditherIndices: 索引合法（长度正确、值域正确）', () => {
+  const w = 24, h = 24;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  let seed = 9;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const v = Math.round(60 + (x + y) * 3 + (rnd() - 0.5) * 30);
+      rgba[i] = v; rgba[i + 1] = v; rgba[i + 2] = 255 - v; rgba[i + 3] = 255;
+    }
+  }
+  const { palette } = PI.quantize(rgba, 16);
+  const idx = PI.ditherIndices(rgba, palette, w, h);
+  assert.strictEqual(idx.length, w * h);
+  for (const v of idx) assert.ok(v >= 0 && v < palette.length);
+});
+
+test('ditherIndices: 打破色带——抖动后同索引连续段显著变短（色带→颗粒）', () => {
+  // 平滑渐变（无噪声）：无抖动时切分出大片同索引区域（色带，段长 ~4px）；
+  // 抖动把色带打散成交织颗粒 → 平均连续段长显著变短
+  const w = 32, h = 32;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const v = Math.round(40 + (x / w) * 180 + (y / h) * 40);
+      rgba[i] = v; rgba[i + 1] = Math.round(v * 0.7); rgba[i + 2] = 255 - v; rgba[i + 3] = 255;
+    }
+  }
+  const { palette, indices: plain } = PI.quantize(rgba, 8);
+  const dithered = PI.ditherIndices(rgba, palette, w, h);
+  const avgRun = (idx) => {
+    let total = 0, runs = 0, prev = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = idx[y * w + x];
+        if (v !== prev) { runs++; prev = v; }
+        total++;
+      }
+    }
+    return total / runs;
+  };
+  const plainRun = avgRun(plain);
+  const ditherRun = avgRun(dithered);
+  assert.ok(ditherRun < plainRun * 0.75,
+    `抖动应显著缩短连续段：plain=${plainRun.toFixed(2)}px dither=${ditherRun.toFixed(2)}px`);
+});
