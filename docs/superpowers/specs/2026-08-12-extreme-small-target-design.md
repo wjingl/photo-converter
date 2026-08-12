@@ -13,9 +13,12 @@
 ## 物理极限核算（0.1KB = 102B，有效上限 102×1.12 = 114B）
 
 - PNG 固定开销：sig 8 + IHDR 25 + IEND 12 + IDAT 头 12 + PLTE 头 12 = 69B + 3B/色；
-  - 8 色：固定 93B → IDAT ≤ 21B → raw ≤ ~18B → **4×4px（raw 20B）勉强**；
-  - 4 色：固定 81B → IDAT ≤ 33B → raw ≤ 30B → **5×5px**；
+  - 8 色：固定 93B + deflate 最低 ~29B（zlib 头尾 11B + 块头）→ 照片类最小 ~122B > 114B **不可达**；
+  - 4 色：固定 81B → **3×3px（raw 12B）≈ 113B ✓ 命中窗口**；2×2 ≈ 110B；
+  - 纯色/极简内容（palette 1–2 色）：固定 ≤84B → 5×5px 级可达；
 - JPEG：最小 ~200B 起（DQT/DHT/SOF/SOS 表开销不可压缩）→ 0.1KB 目标永远超窗。
+
+**结论：0.1KB 目标照片类需要 4 色调色板 + 3×3px 下限**（0.2–0.8KB 区间 8 色可达：0.2KB 上限 229B，8 色 4×4 ≈ 135B ✓）。
 
 ## 设计决策
 
@@ -25,18 +28,19 @@
 - `src/app.js`：`bindSettings` 与 `updatePxHint` 的 `clampNum(..., 1, ...)` → `clampNum(..., 0.1, ...)`；
 - `targetBytes = Math.max(1, Math.round(0.1 × 1024)) = 102`（现有公式已支持小数 targetKB）。
 
-### D2 色数梯度（8 色收窄到 ≤0.8KB）
+### D2 色数梯度（8 色收窄到 ≤0.8KB；0.1KB 级用 4 色）
 
 | 目标大小 | paletteColors |
 |---|---|
-| ≤0.8 KB | **8**（极端低色数，仅此区间） |
+| ≤0.2 KB | **4**（0.1KB 可达必需：3×3px ≈ 113B） |
+| ≤0.8 KB | **8**（极端低色数，用户指定区间） |
 | ≤4 KB | 16 |
 | ≤8 KB | 32 |
 | >8 KB | 0 全彩 |
 
 ### D3 像素下限（0.1KB 可达所需）
 
-- `pngToTarget` 二分下限 16 → **4**（8 色 4×4 = raw 20B 可装进 114B 窗口）；
+- `pngToTarget` 二分下限 16 → **3**（4 色 3×3px 命中 114B 窗口）；
 - `jpegToTarget` 下限 16 → **8**（JPEG 最小块 8×8）；
 - `updatePxHint` 的 `Math.max(16, …)` 下限保持（起始提示语义，0.1KB 显示 16px 级起始）。
 
@@ -50,7 +54,9 @@
 
 ### D5 e2e 与文案
 
-- e2e 新增 0.1KB 轮（smallRound）：PNG 硬约束 ≤ 0.112KB（8 色可达 4×4）；JPEG 允许超窗（note 提示）；
+- e2e 新增 0.1KB 轮（独立段，不复用 convertRound——JPEG 需豁免超窗）：
+  - PNG 全部 ≤ 0.114KB（4 色 3×3 ≈ 113B 命中）；
+  - JPEG 允许超窗且 note 含"物理下限"；
   1KB 轮自动变为 16 色档（0.8–4KB）——PALETTE_OK 断言不变；
 - hint/README：目标范围更新 + "8 色仅 ≤0.8KB" + "JPEG 物理下限 ~0.2KB" 说明。
 
