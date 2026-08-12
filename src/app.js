@@ -63,6 +63,9 @@
       // 小目标自动去噪（≤1KB 强 2 遍、2-8KB 轻 1 遍、>8KB 不去噪）：
       // 噪声是压缩熵主源，去噪提升压缩率 → 同大小可承载更高分辨率
       denoisePasses: s.targetKB <= 1 ? 2 : s.targetKB <= 8 ? 1 : 0,
+      // 小目标自动调色板量化（≤2KB 8 色、≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损）：
+      // 降色彩精度换像素密度——1KB 照片可到 ~48px（全彩仅 ~23px）
+      paletteColors: s.targetKB <= 2 ? 8 : s.targetKB <= 4 ? 16 : s.targetKB <= 8 ? 32 : 0,
     };
   }
 
@@ -848,7 +851,7 @@
   //   · 命中 [下限, 上限] → 无损直通输出（无任何量化损失）
   //   · 上限像素直通仍低于下限 → 内容限制，返回最大可达
   // 硬约束：结果 ≤ target*(1+tol)
-  async function pngToTarget(canvas, targetBytes, tolerance, physMaxCm, targetKB, srcMaxEdge, onEnc) {
+  async function pngToTarget(canvas, targetBytes, tolerance, physMaxCm, targetKB, srcMaxEdge, onEnc, colors = 0) {
     // 有效容差 = min(用户百分比, 5KB/目标)：保证最终大小与目标误差 ≤ 5KB（用户硬要求）
     const MAX_ABS_ERR = 5000;
     const low = Math.max(targetBytes * (1 - tolerance), targetBytes - MAX_ABS_ERR);
@@ -864,6 +867,15 @@
         if (data.data[i] !== 255) { hasAlpha = true; break; }
       }
       const phys = dpiFromPx(Math.max(c.width, c.height), physMaxCm);
+      if (colors > 0) {
+        // 调色板量化路径：1 字节/像素索引 + 高度可压缩 → 同大小更高分辨率
+        const { palette, indices } = PI.quantize(data.data, colors);
+        const bytes = await PI.encodePng({
+          width: data.width, height: data.height,
+          rgba: data.data, indices, palette, mode: 'palette', phys,
+        });
+        return { bytes, phys };
+      }
       const bytes = await PI.encodePng({
         width: data.width, height: data.height,
         rgba: data.data, mode: hasAlpha ? 'rgba' : 'rgb', phys,
@@ -875,7 +887,7 @@
     if (up.bytes.length < low) {
       return { blob: new Blob([up.bytes], { type: 'image/png' }), edge: upper };
     }
-    // 二分像素 [48, upper]：直通 ≤ 上限的最大像素
+    // 二分像素 [16, upper]：直通 ≤ 上限的最大像素
     let lo = 16, hi = upper;
     while (lo < hi) {
       const mid = Math.round((lo + hi + 1) / 2);
@@ -926,7 +938,7 @@
     const onEnc = () => { encCount++; progress(Math.min(95, 40 + encCount * 8)); };
     const srcMaxEdge = Math.max(crop.w, crop.h); // 源信息上限：绝不插值放大超过它
     if (ext === 'png') {
-      const r = await pngToTarget(canvas, s.targetBytes, s.effTol, physMaxCm, s.targetKB, srcMaxEdge, onEnc);
+      const r = await pngToTarget(canvas, s.targetBytes, s.effTol, physMaxCm, s.targetKB, srcMaxEdge, onEnc, s.paletteColors);
       // 最终编码：oxipng（行滤波 + 高级压缩，公认做法）重编码 → 同等像素更小文件
       const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
       // 小目标自动去噪（≤8KB）：噪声是 deflate 压缩熵主源 → 去噪后同大小更高分辨率
@@ -936,19 +948,25 @@
         PI.boxBlur(dimg.data, finalCanvas.width, finalCanvas.height, s.denoisePasses);
         dctx.putImageData(dimg, 0, 0);
       }
-      // 压缩后锐化（PNG 此前缺失）：缩小才锐化，强度随缩小比例（与 JPEG 路径一致）
-      if (r.edge < Math.max(cw, ch)) {
+      // 压缩后锐化（PNG 此前缺失）：缩小才锐化，强度随缩小比例（与 JPEG 路径一致）；
+      // 调色板路径跳过——锐化引入颜色跳变会扰乱索引
+      if (s.paletteColors === 0 && r.edge < Math.max(cw, ch)) {
         const ratio = Math.max(cw, ch) / r.edge;
         lightSharpen(finalCanvas, ratio > 4 ? 0.5 : ratio > 2 ? 0.45 : 0.4);
       }
-      const oxiData = finalCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, finalCanvas.width, finalCanvas.height);
-      const oxiBytes = await encodePngOxipng(oxiData.data, finalCanvas.width, finalCanvas.height);
-      const high = Math.min(s.targetBytes * (1 + s.effTol), s.targetBytes + 5000);
       const physDpi = dpiFromPx(r.edge, physMaxCm);
-      if (oxiBytes && oxiBytes.length <= high && oxiBytes.length <= r.blob.size) {
-        item.resultBlob = new Blob([insertPngPhys(oxiBytes, physDpi)], { type: 'image/png' });
+      if (s.paletteColors === 0) {
+        // 全彩路径：oxipng（行滤波 + 高级压缩）重编码，若更小则采用
+        const oxiData = finalCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        const oxiBytes = await encodePngOxipng(oxiData.data, finalCanvas.width, finalCanvas.height);
+        const high = Math.min(s.targetBytes * (1 + s.effTol), s.targetBytes + 5000);
+        if (oxiBytes && oxiBytes.length <= high && oxiBytes.length <= r.blob.size) {
+          item.resultBlob = new Blob([insertPngPhys(oxiBytes, physDpi)], { type: 'image/png' });
+        } else {
+          item.resultBlob = r.blob; // oxipng 不可用/超限/压缩更差 → 回退自写编码（已含 pHYs）
+        }
       } else {
-        item.resultBlob = r.blob; // oxipng 不可用/超限/压缩更差 → 回退自写编码（已含 pHYs）
+        item.resultBlob = r.blob; // 调色板直出（已含 pHYs；封装仅收全彩输入故跳过 oxipng）
       }
       item.outPxW = cw >= ch ? r.edge : Math.round(r.edge * cw / ch);
       item.outPxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
