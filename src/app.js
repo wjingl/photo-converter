@@ -44,6 +44,7 @@
   }
   function currentSettings() {
     const s = state.settings;
+    const tolerance = Math.max(0.5, Math.min(15, s.tolerance)) / 100;
     return {
       targetKB: s.targetKB,
       targetBytes: Math.max(1, Math.round(s.targetKB * 1024)),
@@ -53,8 +54,12 @@
       sizeH: s.sizeH,
       format: s.format,
       enhance: !!s.enhance,
-      tolerance: Math.max(0.5, Math.min(15, s.tolerance)) / 100,
-      minQ: 90, // 固定高质量：q90 与原始几乎不可分辨（绝不压进伪影区）
+      tolerance,
+      // 小目标（≤8KB）容差自动放宽至 ±12%：±2% 在 1KB 处只有 ±20B 窗口，二分搜索无法命中
+      effTol: Math.max(tolerance, s.targetKB <= 8 ? 0.12 : 0),
+      // 质量下限随目标缩小（1KB≈q30，≥21KB 回到 q90 与旧行为一致）：
+      // 小屏贴片/缩略图场景 q30–40 观感可接受，且更低质量下限 → 二分可承载更高分辨率
+      minQ: Math.min(90, Math.max(30, Math.round(30 + 3 * (s.targetKB - 1)))),
     };
   }
 
@@ -536,7 +541,7 @@
   }
   function bindSettings() {
     const set = (key, val) => { state.settings[key] = val; saveSettings(); };
-    $('#targetKB').addEventListener('change', (e) => { set('targetKB', clampNum(e.target.value, 30, 2048, 100)); updatePxHint(); });
+    $('#targetKB').addEventListener('change', (e) => { set('targetKB', clampNum(e.target.value, 1, 2048, 100)); updatePxHint(); });
     $('#sizeW').addEventListener('change', (e) => { set('sizeW', clampNum(e.target.value, 0.2, 50, 1.5)); updatePxHint(); });
     $('#sizeH').addEventListener('change', (e) => { set('sizeH', clampNum(e.target.value, 0.2, 50, 1.5)); updatePxHint(); });
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
@@ -553,10 +558,10 @@
 
   function updatePxHint() {
     const s = state.settings;
-    const kb = clampNum(s.targetKB, 30, 2048, 100);
+    const kb = clampNum(s.targetKB, 1, 2048, 100);
     const f = Math.sqrt(kb / 50);
-    const w = Math.max(48, Math.round(cmToPx(s.sizeW, BASE_DPI) * f));
-    const h = Math.max(48, Math.round(cmToPx(s.sizeH, BASE_DPI) * f));
+    const w = Math.max(16, Math.round(cmToPx(s.sizeW, BASE_DPI) * f));
+    const h = Math.max(16, Math.round(cmToPx(s.sizeH, BASE_DPI) * f));
     $('#pxHint').textContent = '起始约 ' + w + ' × ' + h + ' 像素（随目标大小与内容自动演算，非固定）';
   }
   function clampNum(v, min, max, fallback) {
@@ -819,7 +824,7 @@
     const r1 = await searchQuality(canvas);
     if (r1) return { blob: r1.blob, q: r1.q, edge: base };
     // 2) 二分分辨率：找「q72 ≤ 上限」的最大分辨率（q72 为画质下限，绝不低于它压）
-    let lo = 48, hi = base, foundRes = 48;
+    let lo = 16, hi = base, foundRes = 16;
     while (lo < hi) {
       const mid = Math.round((lo + hi + 1) / 2);
       const c = scaleTo(mid);
@@ -867,7 +872,7 @@
       return { blob: new Blob([up.bytes], { type: 'image/png' }), edge: upper };
     }
     // 二分像素 [48, upper]：直通 ≤ 上限的最大像素
-    let lo = 48, hi = upper;
+    let lo = 16, hi = upper;
     while (lo < hi) {
       const mid = Math.round((lo + hi + 1) / 2);
       const r = await encode(scaleCanvasByEdge(canvas, mid));
@@ -917,12 +922,12 @@
     const onEnc = () => { encCount++; progress(Math.min(95, 40 + encCount * 8)); };
     const srcMaxEdge = Math.max(crop.w, crop.h); // 源信息上限：绝不插值放大超过它
     if (ext === 'png') {
-      const r = await pngToTarget(canvas, s.targetBytes, s.tolerance, physMaxCm, s.targetKB, srcMaxEdge, onEnc);
+      const r = await pngToTarget(canvas, s.targetBytes, s.effTol, physMaxCm, s.targetKB, srcMaxEdge, onEnc);
       // 最终编码：oxipng（行滤波 + 高级压缩，公认做法）重编码 → 同等像素更小文件
       const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
       const oxiData = finalCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, finalCanvas.width, finalCanvas.height);
       const oxiBytes = await encodePngOxipng(oxiData.data, finalCanvas.width, finalCanvas.height);
-      const high = Math.min(s.targetBytes * (1 + s.tolerance), s.targetBytes + 5000);
+      const high = Math.min(s.targetBytes * (1 + s.effTol), s.targetBytes + 5000);
       const physDpi = dpiFromPx(r.edge, physMaxCm);
       if (oxiBytes && oxiBytes.length <= high && oxiBytes.length <= r.blob.size) {
         item.resultBlob = new Blob([insertPngPhys(oxiBytes, physDpi)], { type: 'image/png' });
@@ -932,13 +937,13 @@
       item.outPxW = cw >= ch ? r.edge : Math.round(r.edge * cw / ch);
       item.outPxH = cw >= ch ? Math.round(r.edge * ch / cw) : r.edge;
       item.outDpi = physDpi;
-      if (item.resultBlob.size < s.targetBytes * (1 - s.tolerance)) {
+      if (item.resultBlob.size < s.targetBytes * (1 - s.effTol)) {
         item.note = ''; // 触顶：不显示提示
       } else if (r.edge > baseEdge) {
         item.note = 'DPI 升至 ' + item.outDpi + '（' + item.outPxW + '×' + item.outPxH + 'px）以达目标';
       }
     } else {
-      const r = await jpegToTarget(canvas, s.targetBytes, s.tolerance, s.targetKB, srcMaxEdge, s.minQ, onEnc);
+      const r = await jpegToTarget(canvas, s.targetBytes, s.effTol, s.targetKB, srcMaxEdge, s.minQ, onEnc);
       // 演算的像素精度：物理尺寸不变，只调整像素
       const dpi = dpiFromPx(r.edge, physMaxCm);
       const pxW = cw >= ch ? r.edge : Math.round(r.edge * cw / ch);
@@ -953,7 +958,7 @@
         // 源分辨率路径（无缩放）：重压缩补偿锐化——恢复感知锐度，抵消二次压缩软化
         lightSharpen(finalCanvas, 0.3);
       }
-      let outBytes = await encodeJpegMozBest(finalCanvas, r.q, s.targetBytes, s.tolerance, s.minQ);
+      let outBytes = await encodeJpegMozBest(finalCanvas, r.q, s.targetBytes, s.effTol, s.minQ);
       if (!outBytes) outBytes = new Uint8Array(await r.blob.arrayBuffer()); // 回退原生
       // 写入演算出的 DPI 元数据（不改变文件大小）
       const withDpi = PI.setJpegDensity(outBytes, dpi);
@@ -963,7 +968,7 @@
       item.outDpi = dpi;
       if (r.edge > baseEdge) item.note = 'DPI 升至 ' + dpi + '（' + pxW + '×' + pxH + 'px）以达目标';
       else if (r.edge < baseEdge) item.note = 'DPI 降至 ' + dpi + ' 以保画质';
-      else if (r.blob.size < s.targetBytes * (1 - s.tolerance)) {
+      else if (r.blob.size < s.targetBytes * (1 - s.effTol)) {
         item.note = ''; // 触顶：不显示提示
       }
     }

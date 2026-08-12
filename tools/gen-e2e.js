@@ -196,7 +196,9 @@ const DRIVER = `
         return files;
       }
 
-      async function convertRound(targetKB, expectHitJpeg, keepList) {
+      async function convertRound(targetKB, expectHitJpeg, keepList, smallRound = false) {
+        // 小目标（≤8KB）：有效容差 ±12%（与引擎 effTol 一致）
+        const win = smallRound ? 0.12 : 0.02;
         // 设置目标大小
         const kbInput = document.querySelector('#targetKB');
         kbInput.value = targetKB;
@@ -243,7 +245,7 @@ const DRIVER = `
         report(unexpectedFail.length === 0 && anyFail.length === 1,
           '目标 ' + targetKB + ' KB：仅坏文件失败、其余全部成功（失败: ' +
           JSON.stringify(anyFail.map((s) => s.name)) + '）');
-        const upper = targetKB * 1.02;
+        const upper = targetKB * (1 + win);
         const over = sizes.filter((s) => s.name !== 'bad-input.jpg' && isFinite(s.kb) && s.kb > upper);
         report(over.length === 0, '目标 ' + targetKB + ' KB：全部 ≤ ' + upper.toFixed(2) + ' KB（超出: ' + JSON.stringify(over) + '）');
         // JPEG 输入（硬约束：≤ 上限；理想：精确命中；简单内容：触顶合法）
@@ -252,24 +254,25 @@ const DRIVER = `
         let jpegOk = false, jpegMode = '';
         if (!isFinite(jkb)) jpegOk = false;
         else if (jkb > upper) jpegOk = false;                       // 超上限 = 失败
-        else if (jkb >= targetKB * 0.98) { jpegOk = true; jpegMode = '精确命中'; }
-        else { jpegOk = jkb > 5; jpegMode = '受限（源分辨率/内容触顶，有效输出）'; }
+        else if (jkb >= targetKB * (smallRound ? 0.88 : 0.98)) { jpegOk = true; jpegMode = '精确命中'; }
+        else { jpegOk = jkb > (smallRound ? 0.1 : 5); jpegMode = '受限（源分辨率/内容触顶，有效输出）'; }
         report(!!jpegOk, '目标 ' + targetKB + ' KB：JPEG 输入' + jpegMode + '（' + jkb + ' KB，硬约束 ≤ ' + upper.toFixed(1) + '）');
         const pngOver = sizes.filter((s) => s.name.endsWith('.png') && isFinite(s.kb) && s.kb > upper);
         report(pngOver.length === 0, '目标 ' + targetKB + ' KB：PNG 输入全部 ≤ ' + upper.toFixed(2) + ' KB');
         // PNG 低熵图也参与 DPI 演算（升像素 + 量化命中目标区间，非固定 236px）
         const bigPhoto = sizes.find((s) => s.name === 'big-photo.png');
-        const bigHit = bigPhoto && isFinite(bigPhoto.kb) && bigPhoto.kb >= targetKB * 0.9 && bigPhoto.kb <= upper;
+        const bigHit = bigPhoto && isFinite(bigPhoto.kb) && bigPhoto.kb <= upper &&
+          (smallRound ? true : bigPhoto.kb >= targetKB * 0.9);
         report(!!bigHit, '目标 ' + targetKB + ' KB：PNG 低熵图演算命中 [' + (targetKB * 0.9).toFixed(1) + ', ' + upper.toFixed(2) + ']（' +
           (bigPhoto ? bigPhoto.kb + ' KB' : '无') + '）');
         // 低熵 JPEG（平滑渐变）：q80 质量下限下可能达不到目标下限（宁可小也不压质量）→ 有效输出即 PASS
         const smooth = sizes.find((s) => s.name === 'smooth-input.jpg');
-        const smoothHit = smooth && isFinite(smooth.kb) && smooth.kb <= upper && smooth.kb > 25;
+        const smoothHit = smooth && isFinite(smooth.kb) && smooth.kb <= upper && smooth.kb > (smallRound ? 0.1 : 25);
         report(!!smoothHit, '目标 ' + targetKB + ' KB：低熵图有效输出（' +
           (smooth ? smooth.kb + ' KB' : '无') + ' ≤ ' + upper.toFixed(1) + '，q80 下限）');
         // 小图源（100×80，10.6KB）：保持源分辨率触顶输出（不放大不缩小，≤ 上限）
         const small = sizes.find((s) => s.name === 'small.png');
-        const smallOk = small && isFinite(small.kb) && small.kb <= upper && small.kb > 5;
+        const smallOk = small && isFinite(small.kb) && small.kb <= upper && small.kb > (smallRound ? 0.1 : 5);
         report(!!smallOk, '目标 ' + targetKB + ' KB：小图源保持分辨率触顶（small ' +
           (small ? small.kb + ' KB' : '?') + ' ≤ ' + upper.toFixed(1) + '）');
         const valid = sizes.filter((s) => s.status === '完成' && isFinite(s.kb) && s.kb > 0);
@@ -460,6 +463,9 @@ const DRIVER = `
 
       // 轮 3：256 KB（大目标 → 验证演算上限随目标增大、大像素命中）
       await convertRound(256, ['photo-input.jpg'], false);
+
+      // 轮 4：1 KB（小目标下限：硬约束 ≤ 1.12KB、JPEG 命中 ~1KB、PNG 无损尽力而为）
+      await convertRound(1, [], true, true);
     } catch (e) {
       window.__e2eFatal = String(e && e.stack || e);
       report(false, '驱动异常: ' + e.message + ' | ' + (e.stack || '').split('\\n')[0]);
