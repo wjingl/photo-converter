@@ -1,7 +1,7 @@
 'use strict';
 /* E2E 运行器：无头浏览器 + CDP（真实时间，跨平台）。
  * 用法：node tools/e2e-run.js [浏览器路径]（默认 Edge；Linux 可传 chromium/chrome） */
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -105,7 +105,6 @@ async function main() {
     console.log(files.length ? files.join(', ') : '(空)');
     const zips = files.filter((f) => f.endsWith('.zip'));
     if (zips.length) {
-      const { spawnSync } = require('node:child_process');
       const zp = path.join(dlDir, zips[zips.length - 1]); // 最新（平铺模式）
       const py = spawnSync('python', ['-c',
         'import zipfile,glob,sys,os\n' +
@@ -133,6 +132,22 @@ async function main() {
     console.log(imgs.length === 9 && over.length === 0
       ? '下载全部校验: PASS（9 张全部 ≤ 1.12KB）'
       : '下载全部校验: FAIL（' + (imgs.length !== 9 ? '期望 9 实际 ' + imgs.length : '超出 1.12KB: ' + over.join(', ')) + '）');
+    // 1KB 轮全部 PNG 应走调色板量化（IHDR colorType=3）——强断言
+    if (imgs.length === 9) {
+      const py2 = spawnSync('python', ['-c',
+        'import glob,os,sys\n' +
+        'pngs=[f for f in glob.glob(os.path.join(sys.argv[1],"*.png"))]\n' +
+        'assert len(pngs)==9, "应有 9 个 PNG: %d" % len(pngs)\n' +
+        'for p in pngs:\n' +
+        '  h=open(p,"rb").read(26)\n' +
+        '  assert h[:8]==b"\\x89PNG\\r\\n\\x1a\\n", "非 PNG: %s" % p\n' +
+        '  ct=h[25]  # IHDR: sig8+len4+type4+width4+height4+depth1 = 25 处为 colorType\n' +
+        '  assert ct==3, "colorType=%d 应为 3(调色板): %s" % (ct, os.path.basename(p))\n' +
+        'print("PALETTE_OK: 9 个 PNG 全部为调色板")',
+        dlDir.replace(/\\/g, '/')], { encoding: 'utf8' });
+      console.log('=== 调色板量化校验 ===');
+      console.log(py2.status === 0 ? (py2.stdout || 'PALETTE_OK') : ('PALETTE_FAIL: ' + py2.stderr));
+    }
   }
 }
 
