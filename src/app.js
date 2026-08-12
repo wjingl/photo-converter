@@ -5,7 +5,8 @@
 
   const state = {
     items: [],
-    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, theme: 'auto' },
+    settings: { targetKB: 100, sizeW: 1.2, sizeH: 1.8, format: 'png', enhance: true, tolerance: 2, theme: 'auto',
+      satAuto: true, satPct: 22, ditherAuto: true, ditherPct: 50, colorMode: 'auto' },
     converting: false,
     cancel: false,
     nextId: 1,
@@ -20,6 +21,10 @@
     try {
       const s = JSON.parse(localStorage.getItem(SETTINGS_KEY));
       if (s) Object.assign(state.settings, s);
+      // 新字段兜底（旧缓存缺失时保持默认；undefined 会覆盖默认值）
+      if (state.settings.satAuto === undefined) state.settings.satAuto = true;
+      if (state.settings.ditherAuto === undefined) state.settings.ditherAuto = true;
+      if (state.settings.colorMode === undefined) state.settings.colorMode = 'auto';
     } catch (e) { /* 忽略 */ }
   }
   function saveSettings() {
@@ -45,9 +50,10 @@
   function currentSettings() {
     const s = state.settings;
     const tolerance = Math.max(0.5, Math.min(15, s.tolerance)) / 100;
-    // 调色板量化：<0.8KB 8 色（极端低色数区间）、0.8–25KB 16 色（把 5-7KB 的好观感扩展到这里）、
-    // 25–50KB 32 色、>50KB 全彩无损（现有行为不变）
-    const paletteColors = s.targetKB <= 0.8 ? 8 : s.targetKB <= 25 ? 16 : s.targetKB <= 50 ? 32 : 0;
+    // 调色板量化：自动档 <0.8KB 8 色、0.8–25KB 16 色、25–50KB 32 色、>50KB 全彩；
+    // 高级设置可覆盖（colorMode: 'auto'/'8'/'16'/'32'/'full'）
+    const autoColors = s.targetKB <= 0.8 ? 8 : s.targetKB <= 25 ? 16 : s.targetKB <= 50 ? 32 : 0;
+    const paletteColors = s.colorMode === 'auto' ? autoColors : s.colorMode === 'full' ? 0 : parseInt(s.colorMode, 10) || autoColors;
     return {
       targetKB: s.targetKB,
       targetBytes: Math.max(1, Math.round(s.targetKB * 1024)),
@@ -69,9 +75,12 @@
       // 小目标自动调色板量化：≤0.8KB 8 色（极端低色数区间，0.3KB 下 8 色 ~12×12px 可达）、
       // ≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损
       paletteColors,
-      // 饱和增强随色数自适应（色数越少补偿越强）：8 色 0.25、16 色 0.22、32 色 0.12、
-      // 全彩（>50KB）不做；抖动已由 ditherIndices 内建 255/色数 自适应
-      satBoost: paletteColors === 8 ? 0.25 : paletteColors === 16 ? 0.22 : paletteColors === 32 ? 0.12 : 0,
+      // 饱和增强：自动档随色数自适应（8 色 0.25 / 16 色 0.22 / 32 色 0.12 / 全彩 0）；
+      // 高级设置可覆盖（satAuto=false 时用 satPct/100）
+      satBoost: s.satAuto === false ? Math.min(0.5, (s.satPct || 0) / 100) :
+        paletteColors === 8 ? 0.25 : paletteColors === 16 ? 0.22 : paletteColors === 32 ? 0.12 : 0,
+      // 抖动强度系数：自动档 0.5（255/色数×0.5）；高级设置可覆盖（0 = 关闭抖动）
+      ditherFactor: s.ditherAuto === false ? Math.min(1, (s.ditherPct || 0) / 100) : 0.5,
     };
   }
 
@@ -550,6 +559,15 @@
     $('#tolerance').value = s.tolerance;
     $('#enhanceToggle').checked = s.enhance;
     $('#themeSelect').value = s.theme || 'auto';
+    $('#satAutoToggle').checked = s.satAuto !== false;
+    $('#satSlider').value = s.satPct || 22;
+    $('#satSlider').disabled = s.satAuto !== false;
+    $('#satVal').textContent = (s.satPct || 22) + '%';
+    $('#ditherAutoToggle').checked = s.ditherAuto !== false;
+    $('#ditherSlider').value = s.ditherPct || 50;
+    $('#ditherSlider').disabled = s.ditherAuto !== false;
+    $('#ditherVal').textContent = (s.ditherPct || 50) + '%';
+    $('#colorModeSelect').value = s.colorMode || 'auto';
     updatePxHint();
   }
   function bindSettings() {
@@ -561,6 +579,11 @@
     $('#tolerance').addEventListener('change', (e) => set('tolerance', clampNum(e.target.value, 1, 10, 2)));
     $('#enhanceToggle').addEventListener('change', (e) => set('enhance', e.target.checked));
     $('#themeSelect').addEventListener('change', (e) => { set('theme', e.target.value); applyTheme(); });
+    $('#satAutoToggle').addEventListener('change', (e) => { set('satAuto', e.target.checked); $('#satSlider').disabled = e.target.checked; });
+    $('#satSlider').addEventListener('input', (e) => { set('satPct', parseInt(e.target.value, 10) || 0); $('#satVal').textContent = e.target.value + '%'; });
+    $('#ditherAutoToggle').addEventListener('change', (e) => { set('ditherAuto', e.target.checked); $('#ditherSlider').disabled = e.target.checked; });
+    $('#ditherSlider').addEventListener('input', (e) => { set('ditherPct', parseInt(e.target.value, 10) || 0); $('#ditherVal').textContent = e.target.value + '%'; });
+    $('#colorModeSelect').addEventListener('change', (e) => set('colorMode', e.target.value));
   }
   // 主题：auto 跟随系统（移除 data-theme），显式覆盖亮/暗
   function applyTheme() {
@@ -862,7 +885,7 @@
   //   · 命中 [下限, 上限] → 无损直通输出（无任何量化损失）
   //   · 上限像素直通仍低于下限 → 内容限制，返回最大可达
   // 硬约束：结果 ≤ target*(1+tol)
-  async function pngToTarget(canvas, targetBytes, tolerance, physMaxCm, targetKB, srcMaxEdge, onEnc, colors = 0) {
+  async function pngToTarget(canvas, targetBytes, tolerance, physMaxCm, targetKB, srcMaxEdge, onEnc, colors = 0, ditherFactor = 0.5) {
     // 有效容差 = min(用户百分比, 5KB/目标)：保证最终大小与目标误差 ≤ 5KB（用户硬要求）
     const MAX_ABS_ERR = 5000;
     const low = Math.max(targetBytes * (1 - tolerance), targetBytes - MAX_ABS_ERR);
@@ -886,8 +909,9 @@
       if (colors > 0) {
         // 调色板量化路径：1 字节/像素索引 + 高度可压缩 → 同大小更高分辨率；
         // Bayer 有序抖动把色带打散成细颗粒（打破"色块崩溃"）
-        const { palette } = PI.quantize(data.data, colors);
-        const indices = PI.ditherIndices(data.data, palette, data.width, data.height);
+        const { palette, indices: rawIdx } = PI.quantize(data.data, colors);
+        // 抖动强度系数：0 = 关闭（用量化原始索引）；>0 按系数（自动档 0.5）
+        const indices = ditherFactor > 0 ? PI.ditherIndices(data.data, palette, data.width, data.height, ditherFactor) : rawIdx;
         const bytes = await PI.encodePng({
           width: data.width, height: data.height,
           rgba: data.data, indices, palette, mode: 'palette', phys,
@@ -956,7 +980,7 @@
     const onEnc = () => { encCount++; progress(Math.min(95, 40 + encCount * 8)); };
     const srcMaxEdge = Math.max(crop.w, crop.h); // 源信息上限：绝不插值放大超过它
     if (ext === 'png') {
-      const r = await pngToTarget(canvas, s.targetBytes, s.effTol, physMaxCm, s.targetKB, srcMaxEdge, onEnc, s.paletteColors);
+      const r = await pngToTarget(canvas, s.targetBytes, s.effTol, physMaxCm, s.targetKB, srcMaxEdge, onEnc, s.paletteColors, s.ditherFactor);
       // 最终编码：oxipng（行滤波 + 高级压缩，公认做法）重编码 → 同等像素更小文件
       const finalCanvas = r.edge === Math.max(cw, ch) ? canvas : scaleCanvasByEdge(canvas, r.edge);
       // 小目标自动去噪（≤8KB）：噪声是 deflate 压缩熵主源 → 去噪后同大小更高分辨率
@@ -1208,6 +1232,8 @@
     applyTheme();
     refresh();
     requestAnimationFrame(() => setTimeout(warmup, 0));
+    // 调试/测试钩子（e2e 用）：暴露内部状态
+    window.__piState = () => ({ settings: state.settings });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

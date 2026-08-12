@@ -323,9 +323,9 @@
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) a[y * 8 + x] = BAYER_R[y * 8 + (7 - x)];
     return a;
   })();
-  function ditherIndices(rgba, palette, w, h) {
+  function ditherIndices(rgba, palette, w, h, strengthFactor = 0.5) {
     const n = w * h;
-    const strength = 255 / Math.max(2, palette.length) * 0.5; // 随色数缩小；×0.5 颗粒温和（色带仍有效打破）
+    const strength = 255 / Math.max(2, palette.length) * strengthFactor; // 随色数缩小；×0.5 颗粒温和（色带仍有效打破）
     const indices = new Uint8Array(n);
     const nearest = (r, g, b) => {
       let best = 0, bestD = Infinity;
