@@ -45,6 +45,9 @@
   function currentSettings() {
     const s = state.settings;
     const tolerance = Math.max(0.5, Math.min(15, s.tolerance)) / 100;
+    // 调色板量化：<0.8KB 8 色（极端低色数区间）、0.8–25KB 16 色（把 5-7KB 的好观感扩展到这里）、
+    // 25–50KB 32 色、>50KB 全彩无损（现有行为不变）
+    const paletteColors = s.targetKB <= 0.8 ? 8 : s.targetKB <= 25 ? 16 : s.targetKB <= 50 ? 32 : 0;
     return {
       targetKB: s.targetKB,
       targetBytes: Math.max(1, Math.round(s.targetKB * 1024)),
@@ -63,12 +66,12 @@
       // 小目标自动去噪（≤1KB 强 2 遍、2-8KB 轻 1 遍、>8KB 不去噪）：
       // 噪声是压缩熵主源，去噪提升压缩率 → 同大小可承载更高分辨率
       denoisePasses: s.targetKB <= 1 ? 2 : s.targetKB <= 8 ? 1 : 0,
-      // 小目标自动调色板量化（≤2KB 8 色、≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损）：
-      // 降色彩精度换像素密度——1KB 照片可到 ~48px（全彩仅 ~23px）
-      paletteColors: s.targetKB <= 2 ? 8 : s.targetKB <= 4 ? 16 : s.targetKB <= 8 ? 32 : 0,
-      // 小目标自动饱和增强（≤2KB +25%、≤8KB +12%、>8KB 不做）：
-      // 补偿压缩（去噪/量化/JPEG 色度下采样）造成的发灰
-      satBoost: s.targetKB <= 2 ? 0.25 : s.targetKB <= 8 ? 0.12 : 0,
+      // 小目标自动调色板量化：≤0.8KB 8 色（极端低色数区间，0.3KB 下 8 色 ~12×12px 可达）、
+      // ≤4KB 16 色、≤8KB 32 色、>8KB 全彩无损
+      paletteColors,
+      // 饱和增强随色数自适应（色数越少补偿越强）：8 色 0.25、16 色 0.18、32 色 0.12、
+      // 全彩（>50KB）不做；抖动已由 ditherIndices 内建 255/色数 自适应
+      satBoost: paletteColors === 8 ? 0.25 : paletteColors === 16 ? 0.18 : paletteColors === 32 ? 0.12 : 0,
     };
   }
 
@@ -551,7 +554,7 @@
   }
   function bindSettings() {
     const set = (key, val) => { state.settings[key] = val; saveSettings(); };
-    $('#targetKB').addEventListener('change', (e) => { set('targetKB', clampNum(e.target.value, 1, 2048, 100)); updatePxHint(); });
+    $('#targetKB').addEventListener('change', (e) => { set('targetKB', clampNum(e.target.value, 0.3, 2048, 100)); updatePxHint(); });
     $('#sizeW').addEventListener('change', (e) => { set('sizeW', clampNum(e.target.value, 0.2, 50, 1.5)); updatePxHint(); });
     $('#sizeH').addEventListener('change', (e) => { set('sizeH', clampNum(e.target.value, 0.2, 50, 1.5)); updatePxHint(); });
     $('#formatSelect').addEventListener('change', (e) => set('format', e.target.value));
@@ -568,7 +571,7 @@
 
   function updatePxHint() {
     const s = state.settings;
-    const kb = clampNum(s.targetKB, 1, 2048, 100);
+    const kb = clampNum(s.targetKB, 0.3, 2048, 100);
     const f = Math.sqrt(kb / 50);
     const w = Math.max(16, Math.round(cmToPx(s.sizeW, BASE_DPI) * f));
     const h = Math.max(16, Math.round(cmToPx(s.sizeH, BASE_DPI) * f));
@@ -811,7 +814,12 @@
     const high = Math.min(targetBytes * (1 + tolerance), targetBytes + MAX_ABS_ERR);
     const MIN_Q = minQ; // 质量下限（high: q85 观感无瑕 / res: q45 高分辨率实验）
     const base = Math.max(canvas.width, canvas.height);
-    const upper = Math.min(calcUpper(base, targetKB), srcMaxEdge); // 绝不插值放大超过源
+    let upper = Math.min(calcUpper(base, targetKB), srcMaxEdge); // 绝不插值放大超过源
+    // 小目标（≤0.5KB）：像素上界收紧——JPEG 物理下限 ~200B 远大于目标，
+    // 二分必收敛到 8px，收紧避免大 mid 的缩放+编码开销拖垮批处理
+    if (targetBytes <= 512) {
+      upper = Math.min(upper, Math.max(8, Math.ceil(Math.sqrt(targetBytes * 8)) + 2));
+    }
     const encJpeg = (c, q) => { onEnc(); return toBlobJpeg(c, q); };
     const scaleTo = (e) => (e === base ? canvas : scaleCanvasByEdge(canvas, e));
     // 指定分辨率下二分质量：命中窗口返回 {blob,q}；q95 ≤ 上限直接返回；否则返回 ≤ 上限的最佳或 null
@@ -834,7 +842,7 @@
     const r1 = await searchQuality(canvas);
     if (r1) return { blob: r1.blob, q: r1.q, edge: base };
     // 2) 二分分辨率：找「q72 ≤ 上限」的最大分辨率（q72 为画质下限，绝不低于它压）
-    let lo = 16, hi = base, foundRes = 16;
+    let lo = 8, hi = base, foundRes = 8; // JPEG 最小块 8×8
     while (lo < hi) {
       const mid = Math.round((lo + hi + 1) / 2);
       const c = scaleTo(mid);
@@ -860,7 +868,12 @@
     const low = Math.max(targetBytes * (1 - tolerance), targetBytes - MAX_ABS_ERR);
     const limit = Math.min(targetBytes * (1 + tolerance), targetBytes + MAX_ABS_ERR);
     const base = Math.max(canvas.width, canvas.height);
-    const upper = Math.min(calcUpper(base, targetKB), srcMaxEdge); // 绝不插值放大超过源图分辨率
+    let upper = Math.min(calcUpper(base, targetKB), srcMaxEdge); // 绝不插值放大超过源图分辨率
+    // 调色板路径小目标（≤0.5KB）：像素上界收紧（按 deflate ≥8x 的保守假设）——
+    // 否则二分从超大 mid 开始，每轮大尺寸 quantize/deflate 开销会撑爆批处理时间
+    if (colors > 0 && targetBytes <= 512) {
+      upper = Math.min(upper, Math.max(3, Math.ceil(Math.sqrt(targetBytes * 8)) + 2));
+    }
     const getData = (c) => c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height);
     const encode = async (c) => {
       if (onEnc) onEnc();
@@ -893,7 +906,7 @@
       return { blob: new Blob([up.bytes], { type: 'image/png' }), edge: upper };
     }
     // 二分像素 [16, upper]：直通 ≤ 上限的最大像素
-    let lo = 16, hi = upper;
+    let lo = 8, hi = upper; // 下限 8px：0.3KB 目标 8 色 8×8 ≈ 200B 可命中
     while (lo < hi) {
       const mid = Math.round((lo + hi + 1) / 2);
       const r = await encode(scaleCanvasByEdge(canvas, mid));
@@ -1026,7 +1039,9 @@
       item.outPxW = pxW;
       item.outPxH = pxH;
       item.outDpi = dpi;
-      if (r.edge > baseEdge) item.note = 'DPI 升至 ' + dpi + '（' + pxW + '×' + pxH + 'px）以达目标';
+      if (item.resultBlob.size > s.targetBytes * (1 + s.effTol)) {
+        item.note = 'JPEG 物理下限（~0.2KB 起），已输出最小可达';
+      } else if (r.edge > baseEdge) item.note = 'DPI 升至 ' + dpi + '（' + pxW + '×' + pxH + 'px）以达目标';
       else if (r.edge < baseEdge) item.note = 'DPI 降至 ' + dpi + ' 以保画质';
       else if (r.blob.size < s.targetBytes * (1 - s.effTol)) {
         item.note = ''; // 触顶：不显示提示

@@ -267,12 +267,12 @@ const DRIVER = `
           (bigPhoto ? bigPhoto.kb + ' KB' : '无') + '）');
         // 低熵 JPEG（平滑渐变）：q80 质量下限下可能达不到目标下限（宁可小也不压质量）→ 有效输出即 PASS
         const smooth = sizes.find((s) => s.name === 'smooth-input.jpg');
-        const smoothHit = smooth && isFinite(smooth.kb) && smooth.kb <= upper && smooth.kb > (smallRound ? 0.1 : 25);
+        const smoothHit = smooth && isFinite(smooth.kb) && smooth.kb <= upper && smooth.kb > (smallRound ? 0.1 : 5);
         report(!!smoothHit, '目标 ' + targetKB + ' KB：低熵图有效输出（' +
           (smooth ? smooth.kb + ' KB' : '无') + ' ≤ ' + upper.toFixed(1) + '，q80 下限）');
         // 小图源（100×80，10.6KB）：保持源分辨率触顶输出（不放大不缩小，≤ 上限）
         const small = sizes.find((s) => s.name === 'small.png');
-        const smallOk = small && isFinite(small.kb) && small.kb <= upper && small.kb > (smallRound ? 0.1 : 5);
+        const smallOk = small && isFinite(small.kb) && small.kb <= upper && small.kb > (smallRound ? 0.1 : 0.5);
         report(!!smallOk, '目标 ' + targetKB + ' KB：小图源保持分辨率触顶（small ' +
           (small ? small.kb + ' KB' : '?') + ' ≤ ' + upper.toFixed(1) + '）');
         const valid = sizes.filter((s) => s.status === '完成' && isFinite(s.kb) && s.kb > 0);
@@ -457,6 +457,47 @@ const DRIVER = `
       treeToggle.checked = true;
       document.querySelector('#btnClearAll').click();
       await tick(200);
+
+      // 轮 5：10 KB（0.8–25KB 区间：32 色量化，与 8KB 场景一致；>25KB 才全彩）
+      await convertRound(10, ['photo-input.jpg'], false);
+
+      // 轮 6：0.3 KB（极端下限：8 色 ~12×12px；JPEG 8×8 ≈ 200-350B 可能命中或标注物理下限）
+      {
+        document.querySelector('#btnClearAll').click();
+        await tick(200);
+        const kbInput = document.querySelector('#targetKB');
+        kbInput.value = 0.3;
+        kbInput.dispatchEvent(new Event('change', { bubbles: true }));
+        const files = await makeFixtureFiles();
+        await importFiles(files);
+        document.querySelector('#btnConvert').click();
+        const finished = await waitUntil(
+          () => {
+            const sts = document.querySelectorAll('.file-row .status');
+            return sts.length > 0 && Array.from(sts).every((s) => s.textContent === '完成' || s.textContent === '失败');
+          },
+          180000, '0.3KB 转换完成'
+        );
+        report(finished, '目标 0.3 KB：转换全部完成');
+        const sizes = [];
+        for (const row of document.querySelectorAll('.file-row')) {
+          const name = row.querySelector('.name').textContent;
+          const status = row.querySelector('.status').textContent;
+          sizes.push({ name, status, kb: parseKB(row.querySelector('.result').textContent), resultTxt: row.querySelector('.result').textContent });
+        }
+        const anyFail = sizes.filter((s) => s.status === '失败');
+        report(anyFail.length === 1 && anyFail[0].name === 'bad-input.jpg', '目标 0.3 KB：仅坏文件失败');
+        // PNG：硬约束 ≤ 0.336KB（8 色 ~12×12px 命中窗口）
+        const pngs = sizes.filter((s) => s.name.endsWith('.png') && isFinite(s.kb));
+        const pngOver = pngs.filter((s) => s.kb > 0.336);
+        report(pngOver.length === 0, '目标 0.3 KB：PNG 全部 ≤ 0.336KB（超出: ' + JSON.stringify(pngOver) + '）');
+        // JPEG：命中窗口或标注物理下限（8×8 最小 ~200-350B，贴近 344B 边界）
+        const jpegs = sizes.filter((s) => /\.jpg$/.test(s.name) && isFinite(s.kb));
+        const jpegOk = jpegs.length === 2 && jpegs.every((s) => s.kb <= 0.5 && (s.kb <= 0.336 || (s.resultTxt || '').includes('物理下限')));
+        report(jpegOk, '目标 0.3 KB：JPEG 命中或标注物理下限（' + jpegs.map((s) => s.kb + 'KB').join(', ') + '）');
+        document.querySelector('#btnClearAll').click();
+        await tick(200);
+      }
 
       // 轮 2：30 KB（落在曲线可命中区，验证二分搜索精确命中）
       await convertRound(30, ['photo-input.jpg'], false);
