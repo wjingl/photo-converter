@@ -466,3 +466,57 @@ test('buildZip: 用系统 Python 交叉验证', () => {
     assert.match(py.stdout, /PYZIP_OK/);
   })();
 });
+
+// ---------- boxBlur（去噪低通滤波）----------
+// 邻域差分能量（方差近似）：相邻像素差平方和
+function diffEnergy(rgba, w, h) {
+  let e = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (x < w - 1) {
+        const dx = rgba[i] - rgba[i + 4];
+        e += dx * dx;
+      }
+      if (y < h - 1) {
+        const dy = rgba[i] - rgba[i + w * 4];
+        e += dy * dy;
+      }
+    }
+  }
+  return e;
+}
+
+test('boxBlur: 尺寸与通道不变，均匀区域保持不变，alpha 不动', () => {
+  const w = 8, h = 6;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < rgba.length; i++) rgba[i] = i % 4 === 3 ? 255 : 100; // 均匀灰
+  const lenBefore = rgba.length;
+  PI.boxBlur(rgba, w, h, 2);
+  assert.strictEqual(rgba.length, lenBefore);
+  for (let i = 0; i < rgba.length; i += 4) {
+    assert.strictEqual(rgba[i], 100);
+    assert.strictEqual(rgba[i + 1], 100);
+    assert.strictEqual(rgba[i + 2], 100);
+    assert.strictEqual(rgba[i + 3], 255); // alpha 保留
+  }
+});
+
+test('boxBlur: 噪声区域方差下降（像素更平滑），遍数越多越平滑', () => {
+  const w = 16, h = 16;
+  const make = () => {
+    const rgba = new Uint8ClampedArray(w * h * 4);
+    let seed = 42;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    for (let i = 0; i < w * h; i++) {
+      const v = Math.round(100 + (rnd() - 0.5) * 160);
+      rgba[i * 4] = v; rgba[i * 4 + 1] = v; rgba[i * 4 + 2] = v; rgba[i * 4 + 3] = 255;
+    }
+    return rgba;
+  };
+  const before = diffEnergy(make(), w, h);
+  const once = diffEnergy(PI.boxBlur(make(), w, h, 1), w, h);
+  const twice = diffEnergy(PI.boxBlur(make(), w, h, 2), w, h);
+  assert.ok(once < before, `1 遍后方差应下降：${before} -> ${once}`);
+  assert.ok(twice < once, `2 遍比 1 遍更平滑：${once} -> ${twice}`);
+});

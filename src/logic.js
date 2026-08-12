@@ -204,33 +204,56 @@
     return { palette, indices };
   }
 
-  // ---------- 反锐化掩模（两遍盒式模糊近似高斯 + 增强）----------
-  function unsharpMask(rgba, w, h, radius = 1, amount = 0.6) {
+  // ---------- 盒式模糊内核（3×3 低通：横+纵两半遍 = 一次完整模糊）----------
+  // 结果写入 Float32Array out（unsharpMask 需不减精度中间值；boxBlur 包装写回 Uint8）
+  function blurInto(rgba, w, h, out) {
     const n = w * h;
     const tmp = new Float32Array(n * 3);
-    const blur = new Float32Array(n * 3);
-    for (let pass = 0; pass < 2; pass++) {
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = y * w + x;
-          const x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1);
-          for (let c = 0; c < 3; c++) {
-            const s = rgba[(y * w + x0) * 4 + c] + rgba[i * 4 + c] + rgba[(y * w + x1) * 4 + c];
-            tmp[i * 3 + c] = s / 3;
-          }
-        }
-      }
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const i = y * w + x;
-          const y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
-          for (let c = 0; c < 3; c++) {
-            const s = tmp[(y0 * w + x) * 3 + c] + tmp[i * 3 + c] + tmp[(y1 * w + x) * 3 + c];
-            blur[i * 3 + c] = s / 3;
-          }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1);
+        for (let c = 0; c < 3; c++) {
+          const s = rgba[(y * w + x0) * 4 + c] + rgba[i * 4 + c] + rgba[(y * w + x1) * 4 + c];
+          tmp[i * 3 + c] = s / 3;
         }
       }
     }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
+        for (let c = 0; c < 3; c++) {
+          const s = tmp[(y0 * w + x) * 3 + c] + tmp[i * 3 + c] + tmp[(y1 * w + x) * 3 + c];
+          out[i * 3 + c] = s / 3;
+        }
+      }
+    }
+    return out;
+  }
+
+  // ---------- 盒式模糊（低通滤波/去噪）----------
+  // 写回 RGB、保留 alpha；passes 为完整模糊遍数（更多遍更平滑）
+  function boxBlur(rgba, w, h, passes = 1) {
+    const n = w * h;
+    const blur = new Float32Array(n * 3);
+    for (let p = 0; p < passes; p++) {
+      blurInto(rgba, w, h, blur);
+      for (let i = 0; i < n * 4; i += 4) {
+        const k = (i / 4) * 3;
+        rgba[i] = Math.round(blur[k]);
+        rgba[i + 1] = Math.round(blur[k + 1]);
+        rgba[i + 2] = Math.round(blur[k + 2]);
+      }
+    }
+    return rgba;
+  }
+
+  // ---------- 反锐化掩模（盒式模糊近似高斯 + 增强）----------
+  function unsharpMask(rgba, w, h, radius = 1, amount = 0.6) {
+    const n = w * h;
+    const blur = new Float32Array(n * 3);
+    blurInto(rgba, w, h, blur);
     for (let i = 0; i < n; i++) {
       for (let c = 0; c < 3; c++) {
         const v = rgba[i * 4 + c] + amount * (rgba[i * 4 + c] - blur[i * 3 + c]);
@@ -466,5 +489,5 @@
     return out;
   }
 
-  return { crc32, encodePng, quantize, unsharpMask, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
+  return { crc32, encodePng, quantize, unsharpMask, boxBlur, autoContrast, buildZip, parseZip, detectArchiveFormat, computeCrop, setJpegDensity, zlibDeflate, rawDeflate };
 });
